@@ -77,6 +77,8 @@ When a valid Hawk access token is available, the extension discovers models by P
 
 and builds the provider list from permitted OpenAI/Anthropic-compatible models.
 
+For models that name-match pi's built-in `openai`/`anthropic` model IDs, the extension reuses built-in defaults (API type, reasoning capability, input types, context window, max tokens, and cost fields).
+
 Discovery runs:
 
 - on extension startup (if `HAWK_ACCESS_TOKEN` is set, or an existing Hawk OAuth access token is present in `~/.pi/agent/auth.json`)

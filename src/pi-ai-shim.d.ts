@@ -8,7 +8,8 @@ declare module "@mariozechner/pi-ai" {
 		maxTokens?: number;
 		signal?: AbortSignal;
 		apiKey?: string;
-		reasoning?: "minimal" | "low" | "medium" | "high";
+		headers?: Record<string, string>;
+		reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh";
 	}
 
 	export interface Model<TApi extends Api> {
@@ -36,19 +37,21 @@ declare module "@mariozechner/pi-ai" {
 		tools?: unknown[];
 	}
 
-	export function streamAnthropic(
+	export function getModels(provider: string): Array<Model<Api>>;
+
+	export function streamSimpleAnthropic(
 		model: Model<"anthropic-messages">,
 		context: Context,
 		options?: SimpleStreamOptions,
 	): AssistantMessageEventStream;
 
-	export function streamOpenAICompletions(
+	export function streamSimpleOpenAICompletions(
 		model: Model<"openai-completions">,
 		context: Context,
 		options?: SimpleStreamOptions,
 	): AssistantMessageEventStream;
 
-	export function streamOpenAIResponses(
+	export function streamSimpleOpenAIResponses(
 		model: Model<"openai-responses">,
 		context: Context,
 		options?: SimpleStreamOptions,
