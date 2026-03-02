@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "description": "Pi extension: Hawk OAuth provider with OpenAI and Anthropic routing",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
   "scripts": {
     "check": "tsc --noEmit"
   },

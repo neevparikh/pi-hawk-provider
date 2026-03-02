@@ -26,6 +26,12 @@ Run pi with the extension:
 pi -e ~/repos/pi-hawk-provider/src/index.ts
 ```
 
+Or install as a pi package from GitHub:
+
+```bash
+pi install git:github.com/neevparikh/pi-hawk-provider
+```
+
 ## Authenticate
 
 In pi:
@@ -79,6 +85,17 @@ Discovery runs:
 There is no static fallback model list. If discovery fails, no `hawk` models are registered in that process.
 
 Run `/login hawk` again (or restart pi with a valid `HAWK_ACCESS_TOKEN`) to retry discovery.
+
+## Troubleshooting package install
+
+If `hawk` does not show up in `/login` after installing, force a reinstall:
+
+```bash
+pi remove git:github.com/neevparikh/pi-hawk-provider
+pi install git:github.com/neevparikh/pi-hawk-provider
+```
+
+Then restart pi and run `/login`.
 
 ## Development check
 
