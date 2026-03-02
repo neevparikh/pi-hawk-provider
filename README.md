@@ -78,7 +78,7 @@ and builds the provider list from permitted OpenAI/Anthropic-compatible models.
 
 Discovery runs:
 
-- on extension startup (if `HAWK_ACCESS_TOKEN` is set)
+- on extension startup (if `HAWK_ACCESS_TOKEN` is set, or an existing Hawk OAuth access token is present in `~/.pi/agent/auth.json`)
 - after `/login hawk`
 - after OAuth refresh
 

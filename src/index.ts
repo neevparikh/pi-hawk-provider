@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
 	type Api,
 	type AssistantMessageEventStream,
@@ -125,6 +128,46 @@ function env(name: string, fallback: string): string {
 	return value && value.trim().length > 0 ? value.trim() : fallback;
 }
 
+function getAuthFilePath(): string {
+	const configuredAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const agentDir =
+		typeof configuredAgentDir === "string" && configuredAgentDir.trim().length > 0
+			? configuredAgentDir.trim()
+			: join(homedir(), ".pi", "agent");
+	return join(agentDir, "auth.json");
+}
+
+function readStoredHawkAccessToken(): string | undefined {
+	try {
+		const authPath = getAuthFilePath();
+		if (!existsSync(authPath)) {
+			return undefined;
+		}
+
+		const raw = readFileSync(authPath, "utf-8");
+		const parsed = parseJson<unknown>(raw);
+		if (!parsed || typeof parsed !== "object") {
+			return undefined;
+		}
+
+		const hawkEntry = (parsed as Record<string, unknown>).hawk;
+		if (!hawkEntry || typeof hawkEntry !== "object") {
+			return undefined;
+		}
+
+		const entry = hawkEntry as Record<string, unknown>;
+		const type = entry.type;
+		const access = entry.access;
+		if (type !== "oauth" || typeof access !== "string" || access.length === 0) {
+			return undefined;
+		}
+
+		return access;
+	} catch {
+		return undefined;
+	}
+}
+
 function getConfig(): HawkConfig {
 	const middlemanBaseUrl = env("HAWK_MIDDLEMAN_BASE_URL", DEFAULT_MIDDLEMAN_BASE_URL).replace(/\/+$/, "");
 	const openaiBaseUrl = env("HAWK_OPENAI_BASE_URL", `${middlemanBaseUrl}/${DEFAULT_OPENAI_ROUTE}`);
@@ -194,6 +237,23 @@ function extractUpstreamModel(name: string): { backend: HawkBackend; upstreamMod
 	const parts = name.split("/").filter((part) => part.length > 0);
 	if (parts.length === 0) {
 		return null;
+	}
+
+	if (parts.length === 1) {
+		const modelId = parts[0] ?? "";
+		const lower = modelId.toLowerCase();
+		if (lower.startsWith("claude") || lower.includes("anthropic")) {
+			return { backend: "anthropic", upstreamModel: modelId };
+		}
+		if (
+			lower.startsWith("gpt") ||
+			lower.startsWith("o1") ||
+			lower.startsWith("o3") ||
+			lower.startsWith("o4") ||
+			lower.includes("openai")
+		) {
+			return { backend: "openai", upstreamModel: modelId };
+		}
 	}
 
 	if (parts[0] === "anthropic") {
@@ -545,7 +605,7 @@ export function streamHawk(
 
 export default async function (pi: ExtensionAPI): Promise<void> {
 	const config = getConfig();
-	const initialAccessToken = process.env.HAWK_ACCESS_TOKEN;
+	const initialAccessToken = process.env.HAWK_ACCESS_TOKEN ?? readStoredHawkAccessToken();
 	if (initialAccessToken) {
 		try {
 			await tryDiscoverModels(initialAccessToken, config);
