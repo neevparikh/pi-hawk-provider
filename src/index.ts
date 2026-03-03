@@ -708,7 +708,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	pi.registerProvider("hawk", {
 		baseUrl: config.middlemanBaseUrl,
 		apiKey: "HAWK_ACCESS_TOKEN",
-		api: "openai-completions",
+		api: "hawk",
 		models: providerModels,
 		oauth: {
 			name: "Hawk",
