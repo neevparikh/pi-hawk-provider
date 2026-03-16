@@ -162,7 +162,7 @@ function getAuthFilePath(): string {
 	return join(agentDir, "auth.json");
 }
 
-function readStoredHawkAccessToken(): string | undefined {
+function readStoredHawkCredentials(): OAuthCredentials | undefined {
 	try {
 		const authPath = getAuthFilePath();
 		if (!existsSync(authPath)) {
@@ -183,11 +183,23 @@ function readStoredHawkAccessToken(): string | undefined {
 		const entry = hawkEntry as Record<string, unknown>;
 		const type = entry.type;
 		const access = entry.access;
-		if (type !== "oauth" || typeof access !== "string" || access.length === 0) {
+		const refresh = entry.refresh;
+		const expires = entry.expires;
+		if (
+			type !== "oauth" ||
+			typeof access !== "string" ||
+			access.length === 0 ||
+			typeof expires !== "number" ||
+			!Number.isFinite(expires)
+		) {
 			return undefined;
 		}
 
-		return access;
+		return {
+			refresh: typeof refresh === "string" ? refresh : "",
+			access,
+			expires,
+		};
 	} catch {
 		return undefined;
 	}
@@ -575,9 +587,8 @@ async function loginHawk(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentia
 	};
 }
 
-async function refreshHawkToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-	const config = getConfig();
-	if (!credentials.refresh) {
+async function refreshAccessToken(config: HawkConfig, refreshToken: string): Promise<OAuthTokenSuccess> {
+	if (!refreshToken) {
 		throw new Error("Missing refresh token");
 	}
 
@@ -589,7 +600,7 @@ async function refreshHawkToken(credentials: OAuthCredentials): Promise<OAuthCre
 		},
 		body: new URLSearchParams({
 			grant_type: "refresh_token",
-			refresh_token: credentials.refresh,
+			refresh_token: refreshToken,
 			client_id: config.clientId,
 		}).toString(),
 	});
@@ -604,6 +615,13 @@ async function refreshHawkToken(credentials: OAuthCredentials): Promise<OAuthCre
 		throw new Error("Refresh response missing access_token or expires_in");
 	}
 
+	return token;
+}
+
+async function refreshHawkToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+	const config = getConfig();
+	const token = await refreshAccessToken(config, credentials.refresh);
+
 	try {
 		await tryDiscoverModels(token.access_token, config);
 	} catch {
@@ -617,6 +635,31 @@ async function refreshHawkToken(credentials: OAuthCredentials): Promise<OAuthCre
 	};
 }
 
+async function getStartupAccessToken(config: HawkConfig): Promise<string | undefined> {
+	const envAccessToken = process.env.HAWK_ACCESS_TOKEN?.trim();
+	if (envAccessToken) {
+		return envAccessToken;
+	}
+
+	const storedCredentials = readStoredHawkCredentials();
+	if (!storedCredentials) {
+		return undefined;
+	}
+
+	if (Date.now() < storedCredentials.expires) {
+		return storedCredentials.access;
+	}
+
+	if (!storedCredentials.refresh) {
+		debugLog("Stored Hawk credentials are expired and missing a refresh token");
+		return undefined;
+	}
+
+	debugLog("Stored Hawk access token expired; refreshing before model discovery");
+	const refreshed = await refreshAccessToken(config, storedCredentials.refresh);
+	return refreshed.access_token;
+}
+
 export function streamHawk(
 	model: Model<Api>,
 	context: Context,
@@ -628,7 +671,7 @@ export function streamHawk(
 		throw new Error(`Unknown Hawk model: ${model.id}. discovered=${runtimeModels.length}`);
 	}
 
-	const accessToken = options?.apiKey ?? process.env.HAWK_ACCESS_TOKEN ?? readStoredHawkAccessToken();
+	const accessToken = options?.apiKey ?? process.env.HAWK_ACCESS_TOKEN ?? readStoredHawkCredentials()?.access;
 	if (!accessToken) {
 		throw new Error("No Hawk access token. Run /login hawk or set HAWK_ACCESS_TOKEN.");
 	}
@@ -693,7 +736,13 @@ export function streamHawk(
 
 export default async function (pi: ExtensionAPI): Promise<void> {
 	const config = getConfig();
-	const initialAccessToken = process.env.HAWK_ACCESS_TOKEN ?? readStoredHawkAccessToken();
+	let initialAccessToken: string | undefined;
+	try {
+		initialAccessToken = await getStartupAccessToken(config);
+	} catch (error) {
+		debugLog("Failed to get startup Hawk token", error);
+	}
+
 	if (initialAccessToken) {
 		try {
 			await tryDiscoverModels(initialAccessToken, config);
