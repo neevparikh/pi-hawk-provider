@@ -79,7 +79,7 @@ and builds the provider list from permitted OpenAI/Anthropic-compatible models.
 
 Only models that name-match pi's built-in `openai`/`anthropic` model IDs are registered. The extension reuses built-in defaults (API type, reasoning capability, input types, context window, max tokens, and cost fields).
 
-For supported Anthropic models, the extension also registers an extra `(fast)` variant that routes with Anthropic fast mode enabled. If Hawk starts returning explicit fast-mode metadata, that is used; otherwise Claude Opus 4.6 / Sonnet 4.6 models are recognized by name.
+For supported Anthropic models, the extension also registers an extra `(fast)` variant that routes with Anthropic fast mode enabled. Claude Opus 4.6 / Sonnet 4.6 models are recognized by name.
 
 Discovery runs:
 
