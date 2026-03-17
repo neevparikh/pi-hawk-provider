@@ -10,6 +10,7 @@ declare module "@mariozechner/pi-ai" {
 		apiKey?: string;
 		headers?: Record<string, string>;
 		reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh";
+		speed?: "fast";
 	}
 
 	export interface Model<TApi extends Api> {

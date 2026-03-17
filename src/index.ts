@@ -90,6 +90,7 @@ interface HawkModelConfig {
 	backend: HawkBackend;
 	upstreamModel: string;
 	openaiApi?: "openai-completions" | "openai-responses";
+	anthropicSpeed?: "fast";
 	reasoning: boolean;
 	input: ("text" | "image")[];
 	contextWindow: number;
@@ -147,6 +148,7 @@ interface OAuthTokenError {
 interface PermittedModelsResponseObject {
 	models?: unknown;
 }
+
 
 function env(name: string, fallback: string): string {
 	const value = process.env[name];
@@ -266,10 +268,6 @@ function replaceRuntimeModels(models: HawkModelConfig[]): void {
 	providerModels.splice(0, providerModels.length, ...models.map(toProviderModelConfig));
 }
 
-function dedupeStrings(values: string[]): string[] {
-	return Array.from(new Set(values));
-}
-
 function extractUpstreamModel(name: string): { backend: HawkBackend; upstreamModel: string } | null {
 	const parts = name.split("/").filter((part) => part.length > 0);
 	if (parts.length === 0) {
@@ -342,26 +340,48 @@ function resolvedOpenAIApiFromBuiltIn(model: Model<Api>): "openai-completions" |
 	return undefined;
 }
 
+function supportsAnthropicFastMode(modelId: string): boolean {
+	return modelId.toLowerCase() === "claude-opus-4-6";
+}
+
+function extractPermittedModelNames(payload: unknown): string[] {
+	if (Array.isArray(payload)) {
+		return payload.filter((value): value is string => typeof value === "string");
+	}
+
+	if (payload && typeof payload === "object") {
+		const maybeObject = payload as PermittedModelsResponseObject;
+		if (Array.isArray(maybeObject.models)) {
+			return maybeObject.models.filter((value): value is string => typeof value === "string");
+		}
+	}
+
+	return [];
+}
+
 function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[] {
-	const normalized = dedupeStrings(permittedModelNames)
-		.map((name) => ({ name, parsed: extractUpstreamModel(name) }))
-		.filter((entry): entry is { name: string; parsed: { backend: HawkBackend; upstreamModel: string } } =>
-			entry.parsed !== null,
-		);
+	const normalized = new Map<string, { backend: HawkBackend; upstreamModel: string }>();
 
-	const seen = new Set<string>();
-	const models: HawkModelConfig[] = [];
-
-	for (const entry of normalized) {
-		const key = `${entry.parsed.backend}:${entry.parsed.upstreamModel}`;
-		if (seen.has(key)) {
+	for (const name of permittedModelNames) {
+		const parsed = extractUpstreamModel(name);
+		if (!parsed) {
 			continue;
 		}
-		seen.add(key);
 
-		const upstreamModel = entry.parsed.upstreamModel;
-		const backend = entry.parsed.backend;
-		const id = upstreamModel;
+		const key = `${parsed.backend}:${parsed.upstreamModel}`;
+		if (!normalized.has(key)) {
+			normalized.set(key, {
+				backend: parsed.backend,
+				upstreamModel: parsed.upstreamModel,
+			});
+		}
+	}
+
+	const models: HawkModelConfig[] = [];
+
+	for (const entry of normalized.values()) {
+		const upstreamModel = entry.upstreamModel;
+		const backend = entry.backend;
 		const builtIn = findBuiltInModel(backend, upstreamModel);
 		if (!builtIn) {
 			debugLog("Skipping discovered model with no built-in metadata match", {
@@ -380,9 +400,7 @@ function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[]
 			continue;
 		}
 
-		models.push({
-			id,
-			name: `${builtIn.name} (Hawk)`,
+		const shared = {
 			backend,
 			upstreamModel,
 			openaiApi,
@@ -391,7 +409,25 @@ function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[]
 			contextWindow: builtIn.contextWindow,
 			maxTokens: builtIn.maxTokens,
 			cost: builtIn.cost,
+		} satisfies Omit<HawkModelConfig, "id" | "name">;
+
+		models.push({
+			id: upstreamModel,
+			name: `${builtIn.name} (Hawk)`,
+			...shared,
 		});
+
+		const enableAnthropicFastMode =
+			backend === "anthropic" &&
+			(supportsAnthropicFastMode(upstreamModel) || supportsAnthropicFastMode(builtIn.id));
+		if (enableAnthropicFastMode) {
+			models.push({
+				id: `${upstreamModel}-fast`,
+				name: `${builtIn.name} (Hawk) (fast)`,
+				anthropicSpeed: "fast",
+				...shared,
+			});
+		}
 	}
 
 	models.sort((a, b) => {
@@ -402,21 +438,6 @@ function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[]
 	});
 
 	return models;
-}
-
-function extractPermittedModelNames(payload: unknown): string[] {
-	if (Array.isArray(payload)) {
-		return payload.filter((value): value is string => typeof value === "string");
-	}
-
-	if (payload && typeof payload === "object") {
-		const maybeObject = payload as PermittedModelsResponseObject;
-		if (Array.isArray(maybeObject.models)) {
-			return maybeObject.models.filter((value): value is string => typeof value === "string");
-		}
-	}
-
-	return [];
 }
 
 async function fetchPermittedModelNames(accessToken: string, config: HawkConfig): Promise<string[]> {
@@ -459,6 +480,7 @@ async function tryDiscoverModels(accessToken: string, config: HawkConfig, onProg
 			backend: model.backend,
 			upstreamModel: model.upstreamModel,
 			openaiApi: model.openaiApi,
+			anthropicSpeed: model.anthropicSpeed,
 		})),
 	});
 	if (discoveredModels.length === 0) {
@@ -716,6 +738,7 @@ export function streamHawk(
 	debugLog("Routing Hawk Anthropic request", {
 		model: model.id,
 		upstreamModel: modelConfig.upstreamModel,
+		speed: modelConfig.anthropicSpeed,
 		baseUrl: config.anthropicBaseUrl,
 	});
 	const anthropicModel: Model<"anthropic-messages"> = {
@@ -727,6 +750,7 @@ export function streamHawk(
 	return streamSimpleAnthropic(anthropicModel, context, {
 		...(options ?? {}),
 		apiKey: accessToken,
+		speed: modelConfig.anthropicSpeed,
 		headers: {
 			...(options?.headers ?? {}),
 			Authorization: `Bearer ${accessToken}`,

@@ -79,6 +79,8 @@ and builds the provider list from permitted OpenAI/Anthropic-compatible models.
 
 Only models that name-match pi's built-in `openai`/`anthropic` model IDs are registered. The extension reuses built-in defaults (API type, reasoning capability, input types, context window, max tokens, and cost fields).
 
+For supported Anthropic models, the extension also registers an extra `(fast)` variant that routes with Anthropic fast mode enabled. Right now this only applies to the literal model ID `claude-opus-4-6`.
+
 Discovery runs:
 
 - on extension startup (if `HAWK_ACCESS_TOKEN` is set, or an existing Hawk OAuth access token is present in `~/.pi/agent/auth.json`)
