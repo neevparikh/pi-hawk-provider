@@ -341,13 +341,7 @@ function resolvedOpenAIApiFromBuiltIn(model: Model<Api>): "openai-completions" |
 }
 
 function supportsAnthropicFastMode(modelId: string): boolean {
-	const lower = modelId.toLowerCase();
-	return (
-		lower.includes("opus-4-6") ||
-		lower.includes("opus-4.6") ||
-		lower.includes("sonnet-4-6") ||
-		lower.includes("sonnet-4.6")
-	);
+	return modelId.toLowerCase() === "claude-opus-4-6";
 }
 
 function extractPermittedModelNames(payload: unknown): string[] {
