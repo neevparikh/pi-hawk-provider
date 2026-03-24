@@ -406,6 +406,18 @@ function supportsAnthropicFastMode(modelId: string): boolean {
 	return modelId.toLowerCase() === "claude-opus-4-6";
 }
 
+/** Anthropic fast mode is priced at 6x standard rates across the full context window. */
+const ANTHROPIC_FAST_MODE_COST_MULTIPLIER = 6;
+
+function applyFastModeCost(cost: HawkModelConfig["cost"]): HawkModelConfig["cost"] {
+	return {
+		input: cost.input * ANTHROPIC_FAST_MODE_COST_MULTIPLIER,
+		output: cost.output * ANTHROPIC_FAST_MODE_COST_MULTIPLIER,
+		cacheRead: cost.cacheRead * ANTHROPIC_FAST_MODE_COST_MULTIPLIER,
+		cacheWrite: cost.cacheWrite * ANTHROPIC_FAST_MODE_COST_MULTIPLIER,
+	};
+}
+
 function extractPermittedModelNames(payload: unknown): string[] {
 	if (Array.isArray(payload)) {
 		return payload.filter((value): value is string => typeof value === "string");
@@ -488,6 +500,7 @@ function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[]
 				name: `${builtIn.name} (Hawk) (fast)`,
 				anthropicSpeed: "fast",
 				...shared,
+				cost: applyFastModeCost(shared.cost),
 			});
 		}
 	}
