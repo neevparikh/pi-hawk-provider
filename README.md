@@ -83,7 +83,7 @@ Example:
 - `HAWK_SCOPES` (default: `openid profile email offline_access`)
 - `HAWK_DEVICE_CODE_PATH` (default: `v1/device/authorize`)
 - `HAWK_TOKEN_PATH` (default: `v1/token`)
-- `HAWK_MIDDLEMAN_BASE_URL` (default: `https://middleman.internal.metr.org`)
+- `HAWK_MIDDLEMAN_BASE_URL` (default: `https://middleman.prd.metr.org`)
 - `HAWK_OPENAI_BASE_URL` (default: `${HAWK_MIDDLEMAN_BASE_URL}/openai/v1`)
 - `HAWK_ANTHROPIC_BASE_URL` (default: `${HAWK_MIDDLEMAN_BASE_URL}/anthropic`)
 - `HAWK_PROVIDER_DEBUG` (`1` or `true` to print discovery/routing debug logs to stderr)
