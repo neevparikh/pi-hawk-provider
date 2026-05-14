@@ -11,6 +11,7 @@ import {
 	streamSimpleAnthropic,
 	streamSimpleOpenAICompletions,
 	streamSimpleOpenAIResponses,
+	type ThinkingLevelMap,
 } from "@mariozechner/pi-ai";
 
 const DEFAULT_ISSUER = "https://metr.okta.com/oauth2/aus1ww3m0x41jKp3L1d8/";
@@ -56,6 +57,7 @@ interface ProviderModelConfig {
 	id: string;
 	name: string;
 	reasoning: boolean;
+	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	contextWindow: number;
@@ -93,6 +95,7 @@ interface HawkModelConfig {
 	openaiApi?: "openai-completions" | "openai-responses";
 	anthropicSpeed?: "fast";
 	reasoning: boolean;
+	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
 	contextWindow: number;
 	maxTokens: number;
@@ -318,6 +321,7 @@ function toProviderModelConfig(model: HawkModelConfig): ProviderModelConfig {
 		id: model.id,
 		name: model.name,
 		reasoning: model.reasoning,
+		...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
 		input: model.input,
 		cost: model.cost,
 		contextWindow: model.contextWindow,
@@ -479,6 +483,7 @@ function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[]
 			upstreamModel,
 			openaiApi,
 			reasoning: builtIn.reasoning,
+			thinkingLevelMap: builtIn.thinkingLevelMap,
 			input: builtIn.input,
 			contextWindow: builtIn.contextWindow,
 			maxTokens: builtIn.maxTokens,
@@ -815,6 +820,7 @@ export function streamHawk(
 		model: model.id,
 		upstreamModel: modelConfig.upstreamModel,
 		speed: modelConfig.anthropicSpeed,
+		thinkingLevelMap: modelConfig.thinkingLevelMap,
 		baseUrl: config.anthropicBaseUrl,
 	});
 	const anthropicModel: Model<"anthropic-messages"> = {
@@ -822,6 +828,7 @@ export function streamHawk(
 		id: modelConfig.upstreamModel,
 		api: "anthropic-messages",
 		baseUrl: config.anthropicBaseUrl,
+		...(modelConfig.thinkingLevelMap ? { thinkingLevelMap: modelConfig.thinkingLevelMap } : {}),
 	};
 	return streamSimpleAnthropic(anthropicModel, context, {
 		...(options ?? {}),

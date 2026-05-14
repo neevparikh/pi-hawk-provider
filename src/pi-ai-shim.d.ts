@@ -13,6 +13,10 @@ declare module "@mariozechner/pi-ai" {
 		speed?: "fast";
 	}
 
+	export type ThinkingLevelMap = Partial<
+		Record<"off" | "minimal" | "low" | "medium" | "high" | "xhigh", string | null>
+	>;
+
 	export interface Model<TApi extends Api> {
 		id: string;
 		name: string;
@@ -20,6 +24,7 @@ declare module "@mariozechner/pi-ai" {
 		provider: string;
 		baseUrl: string;
 		reasoning: boolean;
+		thinkingLevelMap?: ThinkingLevelMap;
 		input: ("text" | "image")[];
 		cost: {
 			input: number;
