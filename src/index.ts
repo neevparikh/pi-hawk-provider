@@ -1041,7 +1041,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
 	pi.registerProvider("hawk", {
 		baseUrl: config.middlemanBaseUrl,
-		apiKey: "HAWK_ACCESS_TOKEN",
+		apiKey: "$HAWK_ACCESS_TOKEN",
 		api: "hawk",
 		headers: config.headers,
 		models: providerModels,
@@ -1068,7 +1068,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 			process.env.HAWK_FAST_MODE === "1" || process.env.HAWK_FAST_MODE === "true"
 				? "HAWK_FAST_MODE env"
 				: "persisted preference";
-		console.error(`[pi-hawk-provider] fast mode enabled at startup — source: ${source}`);
+		debugLog(`fast mode enabled at startup — source: ${source}`);
 	}
 }
 
