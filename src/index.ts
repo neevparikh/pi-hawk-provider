@@ -118,6 +118,15 @@ interface ExtensionAPI {
 			handler: (args: string, ctx: SlashCommandContext) => Promise<void> | void;
 		},
 	): void;
+	/**
+	 * Subscribe to pi session lifecycle events. We only need `session_shutdown`
+	 * (fired on quit and `/reload`) to close the fast-mode proxy; the full
+	 * pi-coding-agent type covers many more event names.
+	 */
+	on(
+		event: "session_shutdown",
+		handler: (event: { type: "session_shutdown"; reason: string }) => void | Promise<void>,
+	): void;
 }
 
 interface HawkModelConfig {
@@ -1038,6 +1047,22 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	} else {
 		debugLog("Fast-mode proxy disabled via HAWK_FAST_MODE_DISABLE");
 	}
+
+	// Tear the proxy down on shutdown so its listening socket is released.
+	// `unref()` already prevents it from blocking process exit, but closing here
+	// avoids leaking a stale listener on `/reload` (which fires session_shutdown
+	// with reason "reload" and then re-runs this extension, starting a fresh
+	// proxy) and shuts down cleanly on "quit".
+	pi.on("session_shutdown", async () => {
+		if (fastModeProxy) {
+			try {
+				await fastModeProxy.close();
+			} catch {
+				/* best-effort: process is going away regardless */
+			}
+			fastModeProxy = undefined;
+		}
+	});
 
 	pi.registerProvider("hawk", {
 		baseUrl: config.middlemanBaseUrl,
