@@ -97,10 +97,20 @@ export interface FastModeOutcome {
 
 /** Fast-tier accounting Anthropic reports back on the response.
  *
- *  A call served on fast tier comes back with `anthropic-fast-*-tokens-*`
- *  headers (the fast-tier mirror of the usual `anthropic-ratelimit-*` set);
- *  a call that ran standard leaves them untouched. That's what makes
- *  after-the-fact verification possible at all — see the module comment. */
+ *  Measured against the middleman on 2026-07-27 with two otherwise-identical
+ *  16-token calls to `claude-opus-5` (see `readFastTierEvidence`). A call
+ *  served on fast tier answers with a fast-tier bucket and *drops* the usual
+ *  token rate-limit headers:
+ *
+ *    anthropic-fast-input-tokens-limit:      2000000
+ *    anthropic-fast-input-tokens-remaining:  1929000
+ *    anthropic-fast-input-tokens-reset:      2026-07-27T20:38:35Z
+ *    anthropic-fast-output-tokens-{limit,remaining,reset}: ...
+ *
+ *  while the control call carries `anthropic-ratelimit-{input,output}-tokens-*`
+ *  and no `anthropic-fast-*` header at all. So presence of the fast bucket is
+ *  the tier signal, and its absence really does mean standard — that's what
+ *  makes after-the-fact verification possible. */
 export interface FastTierEvidence {
   /** Any `anthropic-*fast*` header present on the response. */
   present: boolean;
@@ -199,11 +209,17 @@ function withFastModeBeta(existing: string | string[] | undefined): string {
 /**
  * Read Anthropic's fast-tier accounting off a response.
  *
- * Deliberately matched by shape (`anthropic-*` containing `fast`) rather than
- * an exact header name: the beta's exact naming is the one part of this
- * contract we don't control, and a rename would otherwise silently turn every
- * verified "on" into an unverified "off". Anything that doesn't look like
- * fast-tier accounting is ignored.
+ * Matched by shape (`anthropic-*` containing `fast`) rather than by exact
+ * name. The observed names are `anthropic-fast-{input,output}-tokens-*`, but
+ * naming is the one part of this contract we don't control, and a rename would
+ * otherwise turn every verified "on" into a silent "off". Nothing that looks
+ * like ordinary rate-limit accounting matches: the standard buckets are
+ * `anthropic-ratelimit-*`, with no `fast` anywhere in the name.
+ *
+ * The response body carries the same fact a second time — `usage.speed:
+ * "fast"`, absent on standard calls — but reading it would mean buffering or
+ * teeing every streamed turn to inspect a field that arrives last. Headers say
+ * the same thing before the first token does, for free.
  */
 export function readFastTierEvidence(headers: IncomingHttpHeaders): FastTierEvidence {
   const names: string[] = [];

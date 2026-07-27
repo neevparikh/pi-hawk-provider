@@ -114,7 +114,7 @@ Anthropic's fast tier is a per-turn toggle rather than a separate model: run `/f
 
 pi-ai doesn't expose `speed: "fast"`, so the extension runs a tiny loopback proxy that adds it (plus the `fast-mode-2026-02-01` beta opt-in) to requests it marks. Two things follow from that:
 
-- **The `↯` badge reports measured state, not intent.** After each turn the proxy reads Anthropic's `anthropic-fast-*-tokens-*` accounting off the response: present means the call really was served on fast tier, a zeroed remaining counter means the extra-usage pool is empty (badge shows cooldown), and absent means the call quietly ran standard. `/fast status` prints the last measurement per model.
+- **The `↯` badge reports measured state, not intent.** After each turn the proxy reads Anthropic's fast-tier accounting off the response. A call served on fast tier answers with `anthropic-fast-{input,output}-tokens-{limit,remaining,reset}` headers (and `usage.speed: "fast"` in the body); a standard call carries the ordinary `anthropic-ratelimit-*` set and no fast bucket at all. So: fast bucket present means it really was fast, a zeroed `remaining` means the extra-usage pool is empty (badge shows cooldown), absent means the call quietly ran standard. `/fast status` prints the last measurement per model.
 - **Fast mode can't break a turn.** If upstream rejects a request because of the injected bits, the proxy transparently replays the original request without them; the turn succeeds on standard tier and the badge says so.
 
 Set `HAWK_FAST_MODE_DISABLE=1` to skip the proxy entirely, or `HAWK_PROVIDER_DEBUG=1` to log each request's injection and tier outcome.
