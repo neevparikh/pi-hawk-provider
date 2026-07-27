@@ -98,8 +98,6 @@ and builds the provider list from permitted OpenAI/Anthropic-compatible models.
 
 Only models that name-match pi's built-in `openai`/`anthropic` model IDs are registered. The extension reuses built-in defaults (API type, reasoning capability, input types, context window, max tokens, and cost fields).
 
-For supported Anthropic models, the extension also registers an extra `(fast)` variant that routes with Anthropic fast mode enabled. Right now this only applies to the literal model ID `claude-opus-4-6`.
-
 Discovery runs:
 
 - on extension startup (if `HAWK_ACCESS_TOKEN` is set, or an existing Hawk OAuth access token is present in `~/.pi/agent/auth.json`)
@@ -109,6 +107,17 @@ Discovery runs:
 There is no static fallback model list. If discovery fails, no `hawk` models are registered in that process.
 
 Run `/login hawk` again (or restart pi with a valid `HAWK_ACCESS_TOKEN`) to retry discovery.
+
+## Fast mode
+
+Anthropic's fast tier is a per-turn toggle rather than a separate model: run `/fast on` (persisted to `~/.pi/agent/hawk-state.json`; `HAWK_FAST_MODE=1` overrides it for one launch). It applies only to models Anthropic serves fast tier on — currently `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8` and `claude-opus-5`, plus their middleman routing variants such as `-data-retention`, which are the same models on a different route. Every other model passes through on standard tier, so the toggle is a no-op for them. Expect roughly 6x standard pricing on the turns that do run fast.
+
+pi-ai doesn't expose `speed: "fast"`, so the extension runs a tiny loopback proxy that adds it (plus the `fast-mode-2026-02-01` beta opt-in) to requests it marks. Two things follow from that:
+
+- **The `↯` badge reports measured state, not intent.** After each turn the proxy reads Anthropic's `anthropic-fast-*-tokens-*` accounting off the response: present means the call really was served on fast tier, a zeroed remaining counter means the extra-usage pool is empty (badge shows cooldown), and absent means the call quietly ran standard. `/fast status` prints the last measurement per model.
+- **Fast mode can't break a turn.** If upstream rejects a request because of the injected bits, the proxy transparently replays the original request without them; the turn succeeds on standard tier and the badge says so.
+
+Set `HAWK_FAST_MODE_DISABLE=1` to skip the proxy entirely, or `HAWK_PROVIDER_DEBUG=1` to log each request's injection and tier outcome.
 
 ## Troubleshooting package install
 
@@ -124,5 +133,6 @@ Then restart pi and run `/login`.
 ## Development check
 
 ```bash
-npm run check
+npm run check   # tsc --noEmit
+npm test        # node:test; the fast-mode proxy tests use loopback sockets only
 ```

@@ -16,9 +16,12 @@ import {
 import {
 	FAST_MODE_MODEL_IDS,
 	type FastModeProxyHandle,
+	isFastModeCapableModelId,
 	MARKER_HEADER as FAST_MODE_MARKER_HEADER,
 	startFastModeProxy,
 } from "./fast-mode-proxy.js";
+import { FastModeBadge } from "./fast-mode-badge.js";
+import { MIDDLEMAN_MODEL_SUFFIXES, stripMiddlemanSuffix } from "./model-ids.js";
 import { loadState, saveState, statePath } from "./state.js";
 
 const DEFAULT_ISSUER = "https://metr.okta.com/oauth2/aus1ww3m0x41jKp3L1d8/";
@@ -195,23 +198,29 @@ function resolveInitialFastMode(): boolean {
 }
 
 /**
- * Channel + payload shape consumed by pi-vim's fast-mode glyph (and by any
- * other UI that wants the same indicator). Originally defined by
- * pi-cas-provider; pi-vim explicitly treats it as publisher-agnostic. We
- * mirror the payload shape here so the badge "just works" for hawk's
- * `*-fast` model variants too.
- *   { intent: boolean, actual?: "on"|"off"|"cooldown", model?: string }
+ * Channel consumed by pi-vim's fast-mode glyph and pirouette's dashboard (and
+ * any other UI that wants the same indicator). Originally defined by
+ * pi-cas-provider; pi-vim explicitly treats it as publisher-agnostic.
  */
 const FAST_MODE_BADGE_CHANNEL = "pi:fast-mode" as const;
-function publishFastModeBadge(payload: {
-	intent: boolean;
-	actual?: "on" | "off" | "cooldown";
-	model?: string;
-}): void {
-	const pi = piRef;
-	if (!pi || typeof pi.events?.emit !== "function") return;
-	pi.events.emit(FAST_MODE_BADGE_CHANNEL, payload);
-}
+
+/**
+ * Badge state (`↯` glyph + `/fast status`). Holds the last *measured* tier
+ * per model, dedupes repeat publishes and one-shot warnings. See
+ * `src/fast-mode-badge.ts` for why `actual` can only come from a measurement.
+ *
+ * The emit hop goes through `piRef` on every call rather than being captured,
+ * because the badge is constructed at module load and `pi` only shows up when
+ * the extension is activated.
+ */
+const badge = new FastModeBadge({
+	emit: (payload) => {
+		const pi = piRef;
+		if (!pi || typeof pi.events?.emit !== "function") return;
+		pi.events.emit(FAST_MODE_BADGE_CHANNEL, payload);
+	},
+	debug: debugLog,
+});
 
 function loadBuiltInModels(provider: string): Map<string, Model<Api>> {
 	try {
@@ -709,26 +718,6 @@ function extractUpstreamModel(name: string): { backend: HawkBackend; upstreamMod
 	return null;
 }
 
-/**
- * Middleman/Hawk exposes some models with routing suffixes that don't exist in
- * pi-ai's built-in metadata tables. For example `claude-fable-5-data-retention`
- * is the zero-data-retention route for `claude-fable-5` (the upstream response
- * even reports `model: "claude-fable-5"`). Strip these so the variant can borrow
- * the base model's metadata while still routing under its full upstream id.
- *
- * Keep entries longest-first so more specific suffixes win.
- */
-const MIDDLEMAN_MODEL_SUFFIXES = ["-data-retention"] as const;
-
-function stripMiddlemanSuffix(modelId: string): string | undefined {
-	for (const suffix of MIDDLEMAN_MODEL_SUFFIXES) {
-		if (modelId.length > suffix.length && modelId.endsWith(suffix)) {
-			return modelId.slice(0, -suffix.length);
-		}
-	}
-	return undefined;
-}
-
 function findBuiltInModel(backend: HawkBackend, upstreamModel: string): Model<Api> | undefined {
 	const map = backend === "openai" ? builtInOpenAIModels : builtInAnthropicModels;
 
@@ -757,27 +746,6 @@ function resolvedOpenAIApiFromBuiltIn(model: Model<Api>): "openai-completions" |
 	if (model.api === "openai-responses") return "openai-responses";
 	if (model.api === "openai-completions") return "openai-completions";
 	return undefined;
-}
-
-/**
- * Models on which Anthropic's fast tier is available. Used as the per-turn
- * gate inside `streamHawk`: even when the global `fastModeEnabled` toggle is
- * on, we only flip the marker header on requests for these models. Anything
- * else (Sonnet, Haiku, OpenAI) silently passes through standard tier so the
- * toggle is a no-op for them.
- *
- * The model list itself lives in `FAST_MODE_MODEL_IDS`
- * (`src/fast-mode-proxy.ts`) so this gate and the proxy's injection gate
- * cannot drift apart.
- *
- * Exact match, deliberately: this is the authoritative gate, and fast tier is
- * ~6x standard pricing, so it fails closed. Middleman routing variants such as
- * `claude-opus-4-8-data-retention` are not assumed to support fast tier just
- * because they share a prefix with a model that does.
- */
-function isFastModeCapableModel(modelId: string): boolean {
-	const id = modelId.toLowerCase();
-	return FAST_MODE_MODEL_IDS.some((candidate) => candidate === id);
 }
 
 function extractPermittedModelNames(payload: unknown): string[] {
@@ -1152,7 +1120,7 @@ export function streamHawk(
 		// Clear the fast-mode badge: OpenAI models never participate in
 		// Anthropic's fast-tier service. If a prior turn lit the glyph, this
 		// turn extinguishes it.
-		publishFastModeBadge({ intent: false, model: modelConfig.id });
+		badge.publish({ intent: false, model: modelConfig.id });
 		debugLog("Routing Hawk OpenAI request", {
 			model: model.id,
 			upstreamModel: modelConfig.upstreamModel,
@@ -1198,30 +1166,39 @@ export function streamHawk(
 	// models. If the proxy failed to start at extension load, fall back to
 	// the direct middleman URL — fast-tier models then silently downgrade to
 	// standard tier (matches pre-proxy behavior).
-	const modelSupportsFast = isFastModeCapableModel(modelConfig.upstreamModel);
+	const modelSupportsFast = isFastModeCapableModelId(modelConfig.upstreamModel);
 	const useFastMode = fastModeEnabled && modelSupportsFast;
 
 	// When the user has fast mode enabled but picked a model that doesn't
-	// support it, surface a per-request warning so it's obvious why fast
-	// tier isn't kicking in. Don't suppress on repeats — they may have
-	// just switched models and want immediate feedback.
+	// support it, say why fast tier isn't kicking in — once per model. It used
+	// to fire per request, which sounds like "per turn" but isn't: extensions
+	// make their own calls (auto-mode classifies every tool call on Sonnet),
+	// and that turned one useful sentence into hundreds of log lines a day.
+	// `/fast on` clears the record, so switching models still gets an answer.
 	if (fastModeEnabled && !modelSupportsFast) {
-		console.warn(
+		badge.warnOnce(
+			`unsupported:${modelConfig.upstreamModel}`,
 			`[pi-hawk-provider] /fast is ON but ${modelConfig.upstreamModel} doesn't support ` +
-				`Anthropic fast tier — running this turn as standard. ` +
+				`Anthropic fast tier — those turns run as standard. ` +
 				`Pick one of ${FAST_MODE_MODEL_IDS.join(", ")} to use fast mode.`,
 		);
 	}
 
 	// Publish badge state for pi-vim (and any other consumer of
-	// `pi:fast-mode`). When useFastMode is false we still emit so the
-	// badge clears on every non-fast turn — otherwise a stale "on" from a
-	// previous turn (or from pi-cas-provider in the same session) would
-	// linger. When useFastMode is true we report "on" if the proxy is up
-	// (injection will happen) or "off" if it isn't (silent downgrade).
-	publishFastModeBadge({
+	// `pi:fast-mode`). When useFastMode is false we still emit so the badge
+	// clears for this model — otherwise a stale "on" from a previous turn (or
+	// from pi-cas-provider in the same session) would linger.
+	//
+	// When useFastMode is true, `actual` is deliberately *not* asserted here:
+	// at this point we've only decided to ask. What the API did is reported by
+	// the proxy once the response headers land (`badge.recordOutcome`). Until
+	// then we repeat the last measured value for this model, which is what
+	// `actual` means — "the most recent turn" — and avoids the badge blinking
+	// through "unknown" at the start of every turn. The one case we can call
+	// immediately is a missing proxy: no proxy, no injection, no fast tier.
+	badge.publish({
 		intent: useFastMode,
-		actual: useFastMode ? (fastModeProxy ? "on" : "off") : undefined,
+		actual: useFastMode ? (fastModeProxy ? badge.lastTier(modelConfig.id) : "off") : undefined,
 		model: modelConfig.id,
 	});
 
@@ -1263,7 +1240,9 @@ export function streamHawk(
 			...(options?.headers ?? {}),
 			...(modelConfig.headers ?? {}),
 			Authorization: `Bearer ${accessToken}`,
-			...(useFastMode && fastModeProxy ? { [FAST_MODE_MARKER_HEADER]: "1" } : {}),
+			// Marker value is the hawk model id so the proxy can attribute its
+			// outcome report to the right badge without any correlation state.
+			...(useFastMode && fastModeProxy ? { [FAST_MODE_MARKER_HEADER]: modelConfig.id } : {}),
 		},
 	});
 }
@@ -1300,7 +1279,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		process.env.HAWK_FAST_MODE_DISABLE === "1" || process.env.HAWK_FAST_MODE_DISABLE === "true";
 	if (!fastModeDisabled) {
 		try {
-			fastModeProxy = await startFastModeProxy(config.anthropicBaseUrl);
+			fastModeProxy = await startFastModeProxy(config.anthropicBaseUrl, {
+				onOutcome: (outcome) => badge.recordOutcome(outcome),
+			});
 			debugLog("Fast-mode proxy started", {
 				port: fastModeProxy.port,
 				baseUrl: fastModeProxy.getBaseUrl(),
@@ -1356,7 +1337,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	// (e.g. pi-cas-provider in the same session) gets cleared. If fast
 	// mode is already enabled at launch (from env or persisted state),
 	// show "muted" intent until the next request lights it as "on".
-	publishFastModeBadge({ intent: fastModeEnabled });
+	badge.publish({ intent: fastModeEnabled });
 
 	if (fastModeEnabled) {
 		const source =
@@ -1381,13 +1362,17 @@ function registerFastModeCommand(pi: ExtensionAPI): void {
 			if (arg === "on") {
 				fastModeEnabled = true;
 				changed = true;
+				// Re-arm the state warnings: whatever we told the user last time
+				// (unsupported model, cooldown, downgrade) may no longer hold, and
+				// turning the toggle on is exactly when they want to know.
+				badge.resetWarnings();
 			} else if (arg === "off") {
 				fastModeEnabled = false;
 				changed = true;
 			}
 			if (changed) {
 				saveState({ fastMode: fastModeEnabled });
-				publishFastModeBadge({ intent: fastModeEnabled });
+				badge.publish({ intent: fastModeEnabled });
 			}
 
 			const heading = changed
@@ -1398,6 +1383,24 @@ function registerFastModeCommand(pi: ExtensionAPI): void {
 			lines.push(`  Active on ${FAST_MODE_MODEL_IDS.join(" / ")} only (other models pass through).`);
 			lines.push("  ~6× standard Opus pricing when billed against fast tier.");
 			lines.push(`  Preference persisted to ${statePath()}.`);
+
+			// What the API actually did, not what we asked for. Without this the
+			// only way to tell fast tier from a silent downgrade is the bill.
+			const measurements = badge.measurements();
+			if (measurements.length > 0) {
+				lines.push("  Last measured, from Anthropic's response headers:");
+				for (const [model, tier] of measurements) {
+					const label =
+						tier === "on"
+							? "served on fast tier"
+							: tier === "cooldown"
+								? "cooldown — extra-usage pool empty, running standard"
+								: "ran standard (no premium charge)";
+					lines.push(`    ${model}: ${label}`);
+				}
+			} else if (fastModeEnabled) {
+				lines.push("  No fast-tier turn measured yet this session.");
+			}
 
 			if (!fastModeProxy) {
 				lines.push(
