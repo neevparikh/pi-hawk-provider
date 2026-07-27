@@ -102,6 +102,62 @@ describe("readFastTierEvidence", () => {
 	});
 });
 
+/**
+ * Captured from the middleman on 2026-07-27: two identical 16-token
+ * `claude-opus-5` calls, one with `speed: "fast"` + the beta opt-in and one
+ * without. Kept verbatim so the matcher is tested against what the API really
+ * sends rather than what we assumed it sends.
+ */
+const OBSERVED_FAST_RESPONSE_HEADERS = {
+	"anthropic-fast-input-tokens-limit": "2000000",
+	"anthropic-fast-input-tokens-remaining": "1929000",
+	"anthropic-fast-input-tokens-reset": "2026-07-27T20:38:35Z",
+	"anthropic-fast-output-tokens-limit": "400000",
+	"anthropic-fast-output-tokens-remaining": "400000",
+	"anthropic-fast-output-tokens-reset": "2026-07-27T20:38:33Z",
+	"anthropic-organization-id": "36a533b0-8a62-4bb4-80a5-a774efa6c965",
+	"anthropic-ratelimit-requests-limit": "20000",
+	"anthropic-ratelimit-requests-remaining": "19999",
+	"anthropic-ratelimit-requests-reset": "2026-07-27T20:38:32Z",
+	"content-type": "application/json",
+};
+
+const OBSERVED_STANDARD_RESPONSE_HEADERS = {
+	"anthropic-organization-id": "36a533b0-8a62-4bb4-80a5-a774efa6c965",
+	"anthropic-ratelimit-input-tokens-limit": "13000000",
+	"anthropic-ratelimit-input-tokens-remaining": "13000000",
+	"anthropic-ratelimit-input-tokens-reset": "2026-07-27T20:38:34Z",
+	"anthropic-ratelimit-output-tokens-limit": "2600000",
+	"anthropic-ratelimit-output-tokens-remaining": "2600000",
+	"anthropic-ratelimit-output-tokens-reset": "2026-07-27T20:38:34Z",
+	"anthropic-ratelimit-requests-limit": "20000",
+	"anthropic-ratelimit-requests-remaining": "19999",
+	"anthropic-ratelimit-requests-reset": "2026-07-27T20:38:33Z",
+	"anthropic-ratelimit-tokens-limit": "15600000",
+	"anthropic-ratelimit-tokens-remaining": "15600000",
+	"anthropic-ratelimit-tokens-reset": "2026-07-27T20:38:34Z",
+	"content-type": "application/json",
+};
+
+describe("against real captured responses", () => {
+	it("recognizes a turn Anthropic actually served on fast tier", () => {
+		const evidence = readFastTierEvidence(OBSERVED_FAST_RESPONSE_HEADERS);
+		assert.equal(evidence.present, true);
+		// Tightest bucket of the two token pools.
+		assert.equal(evidence.remaining, 400000);
+		assert.equal(classifyFastTier(true, evidence), "on");
+	});
+
+	it("does not mistake ordinary rate-limit accounting for fast tier", () => {
+		// The control response is dense with `anthropic-ratelimit-*` headers and
+		// must still read as standard — no substring collision, no false yellow.
+		const evidence = readFastTierEvidence(OBSERVED_STANDARD_RESPONSE_HEADERS);
+		assert.equal(evidence.present, false);
+		assert.equal(classifyFastTier(true, evidence), "off");
+		assert.equal(evidence.anthropicNames.length, 13);
+	});
+});
+
 describe("classifyFastTier", () => {
 	const none = readFastTierEvidence({});
 	const served = readFastTierEvidence({ "anthropic-fast-input-tokens-remaining": "500" });
