@@ -34,8 +34,24 @@ const FAST_MODE_BETA = "fast-mode-2026-02-01";
 /** Marker header callers set on requests they want mutated. Stripped before forwarding. */
 export const MARKER_HEADER = "x-hawk-fast-mode" as const;
 
-/** Only inject `speed` for these model id prefixes (case-insensitive). */
-const FAST_MODEL_PREFIXES = ["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"];
+/**
+ * Single source of truth for the models Anthropic serves fast tier on.
+ *
+ * Both fast-mode gates derive from this list, so enabling a new model is a
+ * one-line change here rather than an edit that has to be mirrored:
+ *   - `shouldInject` below — the proxy-side injection gate.
+ *   - `isFastModeCapableModel` in `src/index.ts` — the per-turn gate.
+ * It also drives the user-facing `/fast` strings in `src/index.ts`.
+ *
+ * The two gates match against this list differently on purpose; see the note
+ * on each.
+ */
+export const FAST_MODE_MODEL_IDS = [
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+  "claude-opus-4-8",
+  "claude-opus-5",
+] as const;
 
 export interface FastModeProxyHandle {
   /** Replacement for the upstream anthropicBaseUrl, e.g. "http://127.0.0.1:54321/anthropic". */
@@ -62,10 +78,17 @@ function parseUpstream(raw: string): ParsedUpstream {
   return { url, pathPrefix: url.pathname.replace(/\/+$/, "") };
 }
 
+/**
+ * Prefix match (case-insensitive), deliberately looser than the exact-match
+ * gate in `isFastModeCapableModel`. This is a belt-and-braces check on the way
+ * out: a request only reaches here carrying the marker header if that stricter
+ * gate already approved it, so this just guards against injecting `speed` into
+ * a body whose model was rewritten between the two points.
+ */
 function shouldInject(bodyModel: unknown): boolean {
   if (typeof bodyModel !== "string") return false;
   const lower = bodyModel.toLowerCase();
-  return FAST_MODEL_PREFIXES.some((p) => lower.startsWith(p));
+  return FAST_MODE_MODEL_IDS.some((id) => lower.startsWith(id));
 }
 
 /**
