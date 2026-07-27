@@ -35,7 +35,7 @@ const FAST_MODE_BETA = "fast-mode-2026-02-01";
 export const MARKER_HEADER = "x-hawk-fast-mode" as const;
 
 /** Only inject `speed` for these model id prefixes (case-insensitive). */
-const FAST_MODEL_PREFIXES = ["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"];
+const FAST_MODEL_PREFIXES = ["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5"];
 
 export interface FastModeProxyHandle {
   /** Replacement for the upstream anthropicBaseUrl, e.g. "http://127.0.0.1:54321/anthropic". */

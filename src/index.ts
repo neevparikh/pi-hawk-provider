@@ -557,7 +557,8 @@ function isFastModeCapableModel(modelId: string): boolean {
 	return (
 		id === "claude-opus-4-6" ||
 		id === "claude-opus-4-7" ||
-		id === "claude-opus-4-8"
+		id === "claude-opus-4-8" ||
+		id === "claude-opus-5"
 	);
 }
 
@@ -980,7 +981,7 @@ export function streamHawk(
 		console.warn(
 			`[pi-hawk-provider] /fast is ON but ${modelConfig.upstreamModel} doesn't support ` +
 				`Anthropic fast tier — running this turn as standard. ` +
-				`Pick claude-opus-4-6, -4-7, or -4-8 to use fast mode.`,
+				`Pick claude-opus-4-6, -4-7, -4-8, or claude-opus-5 to use fast mode.`,
 		);
 	}
 
@@ -1165,7 +1166,7 @@ function registerFastModeCommand(pi: ExtensionAPI): void {
 				: `hawk fast mode: ${fastModeEnabled ? "ON" : "off"}`;
 
 			const lines: string[] = [heading];
-			lines.push("  Active on claude-opus-4-6 / -4-7 / -4-8 only (other models pass through).");
+			lines.push("  Active on claude-opus-4-6 / -4-7 / -4-8 / claude-opus-5 only (other models pass through).");
 			lines.push("  ~6× standard Opus pricing when billed against fast tier.");
 			lines.push(`  Preference persisted to ${statePath()}.`);
 
