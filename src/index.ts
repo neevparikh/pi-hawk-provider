@@ -13,7 +13,12 @@ import {
 	streamSimpleOpenAIResponses,
 	type ThinkingLevelMap,
 } from "@mariozechner/pi-ai";
-import { type FastModeProxyHandle, MARKER_HEADER as FAST_MODE_MARKER_HEADER, startFastModeProxy } from "./fast-mode-proxy.js";
+import {
+	FAST_MODE_MODEL_IDS,
+	type FastModeProxyHandle,
+	MARKER_HEADER as FAST_MODE_MARKER_HEADER,
+	startFastModeProxy,
+} from "./fast-mode-proxy.js";
 import { loadState, saveState, statePath } from "./state.js";
 
 const DEFAULT_ISSUER = "https://metr.okta.com/oauth2/aus1ww3m0x41jKp3L1d8/";
@@ -549,17 +554,18 @@ function resolvedOpenAIApiFromBuiltIn(model: Model<Api>): "openai-completions" |
  * else (Sonnet, Haiku, OpenAI) silently passes through standard tier so the
  * toggle is a no-op for them.
  *
- * Kept in sync with `FAST_MODEL_PREFIXES` in `src/fast-mode-proxy.ts` —
- * those are the prefixes the proxy will inject for.
+ * The model list itself lives in `FAST_MODE_MODEL_IDS`
+ * (`src/fast-mode-proxy.ts`) so this gate and the proxy's injection gate
+ * cannot drift apart.
+ *
+ * Exact match, deliberately: this is the authoritative gate, and fast tier is
+ * ~6x standard pricing, so it fails closed. Middleman routing variants such as
+ * `claude-opus-4-8-data-retention` are not assumed to support fast tier just
+ * because they share a prefix with a model that does.
  */
 function isFastModeCapableModel(modelId: string): boolean {
 	const id = modelId.toLowerCase();
-	return (
-		id === "claude-opus-4-6" ||
-		id === "claude-opus-4-7" ||
-		id === "claude-opus-4-8" ||
-		id === "claude-opus-5"
-	);
+	return FAST_MODE_MODEL_IDS.some((candidate) => candidate === id);
 }
 
 function extractPermittedModelNames(payload: unknown): string[] {
@@ -981,7 +987,7 @@ export function streamHawk(
 		console.warn(
 			`[pi-hawk-provider] /fast is ON but ${modelConfig.upstreamModel} doesn't support ` +
 				`Anthropic fast tier — running this turn as standard. ` +
-				`Pick claude-opus-4-6, -4-7, -4-8, or claude-opus-5 to use fast mode.`,
+				`Pick one of ${FAST_MODE_MODEL_IDS.join(", ")} to use fast mode.`,
 		);
 	}
 
@@ -1166,7 +1172,7 @@ function registerFastModeCommand(pi: ExtensionAPI): void {
 				: `hawk fast mode: ${fastModeEnabled ? "ON" : "off"}`;
 
 			const lines: string[] = [heading];
-			lines.push("  Active on claude-opus-4-6 / -4-7 / -4-8 / claude-opus-5 only (other models pass through).");
+			lines.push(`  Active on ${FAST_MODE_MODEL_IDS.join(" / ")} only (other models pass through).`);
 			lines.push("  ~6× standard Opus pricing when billed against fast tier.");
 			lines.push(`  Preference persisted to ${statePath()}.`);
 
