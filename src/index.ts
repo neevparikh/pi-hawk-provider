@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import {
 	type Api,
 	type AssistantMessageEventStream,
@@ -146,6 +146,7 @@ interface HawkModelConfig {
 	contextWindow: number;
 	maxTokens: number;
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	headers?: Record<string, string>;
 	compat?: { forceAdaptiveThinking?: boolean };
 }
 
@@ -237,9 +238,25 @@ interface HawkConfig {
 	headers?: Record<string, string>;
 }
 
+interface ExtraModelConfig {
+	id: string;
+	name?: string;
+	backend: HawkBackend;
+	openaiApi?: "openai-completions" | "openai-responses";
+	reasoning?: boolean;
+	input?: ("text" | "image")[];
+	contextWindow?: number;
+	maxTokens?: number;
+	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	headers?: Record<string, string>;
+	compat?: { forceAdaptiveThinking?: boolean };
+	thinkingLevelMap?: ThinkingLevelMap;
+}
+
 interface HawkProviderOverride {
 	baseUrl?: string;
 	headers?: Record<string, string>;
+	extraModels?: ExtraModelConfig[];
 }
 
 interface DeviceCodeResponse {
@@ -311,24 +328,96 @@ function readHawkProviderOverride(): HawkProviderOverride {
 		}
 
 		const entry = hawkEntry as Record<string, unknown>;
-		const headers = entry.headers;
-		const resolvedHeaders: Record<string, string> = {};
-		if (headers && typeof headers === "object") {
-			for (const [key, value] of Object.entries(headers)) {
-				if (typeof value === "string") {
-					resolvedHeaders[key] = value;
-				}
-			}
-		}
+		const extraModels = parseExtraModels(entry.extraModels);
 
 		return {
 			baseUrl: typeof entry.baseUrl === "string" && entry.baseUrl.trim().length > 0 ? entry.baseUrl.trim() : undefined,
-			headers: Object.keys(resolvedHeaders).length > 0 ? resolvedHeaders : undefined,
+			headers: parseHeaders(entry.headers),
+			extraModels: extraModels.length > 0 ? extraModels : undefined,
 		};
 	} catch (error) {
 		debugLog("Failed to read Hawk override from models.json", error);
 		return {};
 	}
+}
+
+function parseExtraModels(raw: unknown): ExtraModelConfig[] {
+	if (!Array.isArray(raw)) return [];
+	const result: ExtraModelConfig[] = [];
+	for (const item of raw) {
+		if (!item || typeof item !== "object") continue;
+		const entry = item as Record<string, unknown>;
+		const id = entry.id;
+		const backend = entry.backend;
+		if (typeof id !== "string" || id.length === 0) continue;
+		if (backend !== "openai" && backend !== "anthropic") continue;
+
+		const openaiApi = entry.openaiApi;
+		const validOpenaiApi =
+			openaiApi === "openai-completions" || openaiApi === "openai-responses" ? openaiApi : undefined;
+
+		const modelHeaders = parseHeaders(entry.headers);
+
+		result.push({
+			id,
+			name: typeof entry.name === "string" ? entry.name : undefined,
+			backend,
+			openaiApi: backend === "openai" ? (validOpenaiApi ?? "openai-completions") : undefined,
+			reasoning: typeof entry.reasoning === "boolean" ? entry.reasoning : false,
+			input: Array.isArray(entry.input) ? entry.input.filter((v: unknown) => v === "text" || v === "image") : ["text", "image"],
+			contextWindow: typeof entry.contextWindow === "number" ? entry.contextWindow : 200_000,
+			maxTokens: typeof entry.maxTokens === "number" ? entry.maxTokens : 32_000,
+			cost: parseCost(entry.cost),
+			headers: modelHeaders,
+			compat: parseCompat(entry.compat),
+			thinkingLevelMap: parseThinkingLevelMap(entry.thinkingLevelMap),
+		});
+	}
+	return result;
+}
+
+function parseHeaders(raw: unknown): Record<string, string> | undefined {
+	if (!raw || typeof raw !== "object") return undefined;
+	const result: Record<string, string> = {};
+	for (const [key, value] of Object.entries(raw)) {
+		if (typeof value === "string") {
+			result[key] = value;
+		}
+	}
+	return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseCompat(raw: unknown): { forceAdaptiveThinking?: boolean } | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const entry = raw as Record<string, unknown>;
+	if (typeof entry.forceAdaptiveThinking !== "boolean") return undefined;
+	return { forceAdaptiveThinking: entry.forceAdaptiveThinking };
+}
+
+function parseThinkingLevelMap(raw: unknown): ThinkingLevelMap | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const allowedLevels = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+	const entry = raw as Record<string, unknown>;
+	const result: ThinkingLevelMap = {};
+	for (const level of allowedLevels) {
+		const value = entry[level];
+		if (typeof value === "string" || value === null) {
+			result[level] = value;
+		}
+	}
+	return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseCost(raw: unknown): { input: number; output: number; cacheRead: number; cacheWrite: number } {
+	const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	if (!raw || typeof raw !== "object") return defaultCost;
+	const c = raw as Record<string, unknown>;
+	return {
+		input: typeof c.input === "number" ? c.input : 0,
+		output: typeof c.output === "number" ? c.output : 0,
+		cacheRead: typeof c.cacheRead === "number" ? c.cacheRead : 0,
+		cacheWrite: typeof c.cacheWrite === "number" ? c.cacheWrite : 0,
+	};
 }
 
 function readStoredHawkCredentials(): OAuthCredentials | undefined {
@@ -436,9 +525,132 @@ function toProviderModelConfig(model: HawkModelConfig): ProviderModelConfig {
 	};
 }
 
+/**
+ * Find the .allowed-agents file by walking up from startDir.
+ * Returns the file path, or undefined if not found.
+ */
+function findAllowedAgentsFile(startDir: string): string | undefined {
+	let dir = startDir;
+	while (true) {
+		const candidate = join(dir, ".allowed-agents");
+		if (existsSync(candidate)) {
+			return candidate;
+		}
+		const parent = dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return undefined;
+}
+
+/**
+ * Read model filter globs for "pi" from .allowed-agents.
+ * Returns an array of glob patterns, or undefined if no restrictions.
+ *
+ * Syntax in .allowed-agents:
+ *   pi              → no model restrictions (returns undefined)
+ *   pi[claude*]     → restrict to models matching "claude*"
+ *   pi[claude*,gpt*] → restrict to models matching "claude*" or "gpt*"
+ */
+function readModelFilters(startDir: string): string[] | undefined {
+	const filePath = findAllowedAgentsFile(startDir);
+	if (!filePath) return undefined;
+
+	try {
+		const content = readFileSync(filePath, "utf-8");
+		const lines = content.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
+
+		for (const line of lines) {
+			const match = line.match(/^pi\[(.+)\]$/);
+			if (match && match[1]) {
+				const filters = match[1].split(",").map((f) => f.trim()).filter((f) => f.length > 0);
+				if (filters.length > 0) {
+					debugLog("Model filters from .allowed-agents", { filePath, filters });
+					return filters;
+				}
+			}
+		}
+	} catch (error) {
+		debugLog("Failed to read .allowed-agents for model filters", error);
+	}
+
+	return undefined;
+}
+
+/**
+ * Test whether a model ID matches a glob pattern.
+ * Supports * (any chars) and ? (single char).
+ */
+function globMatch(pattern: string, text: string): boolean {
+	const regexStr = pattern
+		.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+		.replace(/\*/g, ".*")
+		.replace(/\?/g, ".");
+	return new RegExp(`^${regexStr}$`, "i").test(text);
+}
+
+/**
+ * Filter models based on glob patterns from .allowed-agents.
+ * If no filters are configured, returns models unchanged.
+ */
+function applyModelFilters(models: HawkModelConfig[]): HawkModelConfig[] {
+	const cwd = process.cwd();
+	const filters = readModelFilters(cwd);
+	if (!filters) return models;
+
+	const filtered = models.filter((model) =>
+		filters.some((pattern) => globMatch(pattern, model.id) || globMatch(pattern, model.upstreamModel)),
+	);
+
+	debugLog("Applied model filters", {
+		cwd,
+		filters,
+		before: models.length,
+		after: filtered.length,
+		kept: filtered.map((m) => m.id),
+	});
+
+	return filtered;
+}
+
 function replaceRuntimeModels(models: HawkModelConfig[]): void {
 	runtimeModels.splice(0, runtimeModels.length, ...models);
-	providerModels.splice(0, providerModels.length, ...models.map(toProviderModelConfig));
+	appendExtraModelsToRuntime();
+	providerModels.splice(0, providerModels.length, ...runtimeModels.map(toProviderModelConfig));
+}
+
+function extraModelToHawkModelConfig(extra: ExtraModelConfig): HawkModelConfig {
+	return {
+		id: extra.id,
+		name: extra.name ?? `${extra.id} (Hawk)`,
+		backend: extra.backend,
+		upstreamModel: extra.id,
+		openaiApi: extra.openaiApi,
+		reasoning: extra.reasoning ?? false,
+		input: extra.input ?? ["text", "image"],
+		contextWindow: extra.contextWindow ?? 200_000,
+		maxTokens: extra.maxTokens ?? 32_000,
+		cost: extra.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		headers: extra.headers,
+		compat: extra.compat,
+		thinkingLevelMap: extra.thinkingLevelMap,
+	};
+}
+
+function appendExtraModelsToRuntime(): void {
+	const override = readHawkProviderOverride();
+	if (!override.extraModels || override.extraModels.length === 0) return;
+
+	const existingIds = new Set(runtimeModels.map((m) => m.id));
+	for (const extra of override.extraModels) {
+		if (existingIds.has(extra.id)) {
+			debugLog("Extra model skipped (already discovered)", { id: extra.id });
+			continue;
+		}
+		const hawkModel = extraModelToHawkModelConfig(extra);
+		runtimeModels.push(hawkModel);
+		debugLog("Added extra model from config", { id: hawkModel.id, backend: hawkModel.backend });
+	}
 }
 
 function extractUpstreamModel(name: string): { backend: HawkBackend; upstreamModel: string } | null {
@@ -716,8 +928,12 @@ async function tryDiscoverModels(accessToken: string, config: HawkConfig, onProg
 	if (discoveredModels.length === 0) {
 		throw new Error("No OpenAI/Anthropic-compatible models found in Hawk permitted model list");
 	}
-	replaceRuntimeModels(discoveredModels);
-	onProgress?.(`Discovered ${discoveredModels.length} Hawk models`);
+	const filteredModels = applyModelFilters(discoveredModels);
+	if (filteredModels.length === 0) {
+		throw new Error("All discovered Hawk models were excluded by .allowed-agents model filters");
+	}
+	replaceRuntimeModels(filteredModels);
+	onProgress?.(`Discovered ${filteredModels.length} Hawk models`);
 }
 
 async function startDeviceCodeFlow(config: HawkConfig): Promise<DeviceCodeResponse> {
@@ -944,6 +1160,10 @@ export function streamHawk(
 			baseUrl: config.openaiBaseUrl,
 		});
 
+		const openaiHeaders = modelConfig.headers
+			? { ...(options?.headers ?? {}), ...modelConfig.headers }
+			: options?.headers;
+
 		if (openaiApi === "openai-responses") {
 			const openaiModel: Model<"openai-responses"> = {
 				...model,
@@ -954,6 +1174,7 @@ export function streamHawk(
 			return streamSimpleOpenAIResponses(openaiModel, context, {
 				...(options ?? {}),
 				apiKey: accessToken,
+				...(openaiHeaders ? { headers: openaiHeaders } : {}),
 			});
 		}
 
@@ -966,6 +1187,7 @@ export function streamHawk(
 		return streamSimpleOpenAICompletions(openaiModel, context, {
 			...(options ?? {}),
 			apiKey: accessToken,
+			...(openaiHeaders ? { headers: openaiHeaders } : {}),
 		});
 	}
 
@@ -1039,6 +1261,7 @@ export function streamHawk(
 		...(useFastMode ? { speed: "fast" as const } : {}),
 		headers: {
 			...(options?.headers ?? {}),
+			...(modelConfig.headers ?? {}),
 			Authorization: `Bearer ${accessToken}`,
 			...(useFastMode && fastModeProxy ? { [FAST_MODE_MARKER_HEADER]: "1" } : {}),
 		},
