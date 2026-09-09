@@ -50,6 +50,8 @@ const FAST_MODE_BETA = "fast-mode-2026-02-01";
  *  outcome callback so the badge can be attributed to the right model without
  *  the caller having to correlate anything. Stripped before forwarding. */
 export const MARKER_HEADER = "x-hawk-fast-mode" as const;
+/** Local toggle generation, stripped alongside the model marker. */
+export const GENERATION_HEADER = "x-hawk-fast-mode-generation" as const;
 
 /**
  * Single source of truth for the models Anthropic serves fast tier on.
@@ -77,6 +79,8 @@ export const FAST_MODE_MODEL_IDS = [
 export interface FastModeOutcome {
   /** Hawk model id carried on the marker header, e.g. `claude-opus-5`. */
   hawkModelId: string;
+  /** Toggle generation at request dispatch, for ignoring stale badge reports. */
+  generation?: number;
   /** Model id in the request body (may carry a routing suffix). */
   bodyModel: string | null;
   /** Whether `speed: "fast"` + the beta header actually went out. */
@@ -333,6 +337,9 @@ export async function startFastModeProxy(
       const marker = clientReq.headers[MARKER_HEADER];
       const hawkModelId = (Array.isArray(marker) ? marker[0] : marker)?.trim() || null;
       const wantsInject = marker !== undefined;
+      const rawGeneration = clientReq.headers[GENERATION_HEADER];
+      const generation = typeof rawGeneration === "string" && /^\d+$/.test(rawGeneration)
+        ? Number(rawGeneration) : undefined;
 
       // Default: pass through unchanged.
       let outBody = reqBodyBuf;
@@ -370,6 +377,7 @@ export async function startFastModeProxy(
         try {
           options.onOutcome({
             hawkModelId,
+            ...(generation !== undefined ? { generation } : {}),
             bodyModel,
             injected: didInject,
             tier: classifyFastTier(didInject, evidence),
@@ -390,7 +398,7 @@ export async function startFastModeProxy(
         const lower = k.toLowerCase();
         if (lower === "host" || lower === "connection" || lower === "content-length") continue;
         // Marker is internal — strip it so it doesn't reach upstream.
-        if (lower === MARKER_HEADER) continue;
+        if (lower === MARKER_HEADER || lower === GENERATION_HEADER) continue;
         baseHeaders[k] = v;
       }
       baseHeaders["host"] = upstream.host;
