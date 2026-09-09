@@ -13,9 +13,8 @@
  * the request went out, from nothing more than "the injection proxy process is
  * alive" — which reads as a confident yellow glyph whether or not Anthropic
  * served fast tier, and could never produce the "cooldown" state the contract
- * defines. Here it's only ever set from a `FastModeOutcome`: a specific
- * request that the proxy mutated, and a specific response whose fast-tier
- * accounting it read (see `classifyFastTier`).
+ * defines. Here it's only ever set from measured Anthropic response headers
+ * or the terminal OpenAI Responses service_tier, never from request intent.
  *
  * Lives apart from index.ts so it can be tested without pi's runtime.
  */
@@ -46,6 +45,25 @@ export class FastModeBadge {
 	private readonly published = new Map<string, string>();
 	/** Warnings already shown; see `warnOnce`. */
 	private readonly warned = new Set<string>();
+	/** Toggle generation: late responses must not relight an invalidated badge. */
+	private generation = 0;
+
+	get currentGeneration(): number { return this.generation; }
+
+	setIntent(intent: boolean): void {
+		this.generation++;
+		this.tiers.clear();
+		this.published.clear();
+		this.publish({ intent });
+	}
+
+	/** OpenAI's tier is optional: absent evidence is unknown, not standard. */
+	recordOpenAIOutcome(model: string, intent: boolean, tier: FastModeTier | undefined, generation: number): void {
+		if (generation !== this.generation) return;
+		if (tier === undefined) this.tiers.delete(model);
+		else this.tiers.set(model, tier);
+		this.publish({ intent, actual: tier, model });
+	}
 
 	constructor(deps: FastModeBadgeDeps) {
 		this.deps = {
@@ -87,6 +105,7 @@ export class FastModeBadge {
 	 * tier, because it's the only one holding evidence.
 	 */
 	recordOutcome(outcome: FastModeOutcome): void {
+		if (outcome.generation !== undefined && outcome.generation !== this.generation) return;
 		this.deps.debug("fast-mode outcome", {
 			model: outcome.hawkModelId,
 			bodyModel: outcome.bodyModel,
@@ -105,12 +124,10 @@ export class FastModeBadge {
 				: { anthropicResponseHeaders: outcome.evidence.anthropicNames }),
 		});
 
-		// A failed request didn't run on any tier. Calling it "off" would blame
-		// fast mode for an unrelated 500 and discard the last real measurement
-		// for this model. The retry path is exempt: there we know a replacement
-		// request ran, and that it ran standard.
+		// A failed request (including a failed standard retry) is not a tier
+		// measurement. Keep the last real measurement instead.
 		const succeeded = outcome.status >= 200 && outcome.status < 300;
-		if (!succeeded && !outcome.retriedWithoutFastMode) return;
+		if (!succeeded) return;
 
 		this.tiers.set(outcome.hawkModelId, outcome.tier);
 		this.publish({ intent: true, actual: outcome.tier, model: outcome.hawkModelId });

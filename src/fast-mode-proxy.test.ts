@@ -18,6 +18,7 @@ import {
 	isFastModeCapableModelId,
 	looksLikeSpeedRejection,
 	MARKER_HEADER,
+	GENERATION_HEADER,
 	readFastTierEvidence,
 	shouldInject,
 	startFastModeProxy,
@@ -202,6 +203,7 @@ interface UpstreamCapture {
 	body: Record<string, unknown>;
 	beta: string | undefined;
 	marker: string | string[] | undefined;
+	generation: string | string[] | undefined;
 }
 
 /** Fake middleman. `respond` decides what each request gets back, so a test
@@ -224,6 +226,7 @@ async function startUpstream(
 				body,
 				beta: req.headers["anthropic-beta"] as string | undefined,
 				marker: req.headers[MARKER_HEADER],
+				generation: req.headers[GENERATION_HEADER],
 			});
 			respond(req, res, calls.length);
 		});
@@ -272,7 +275,9 @@ describe("fast-mode proxy", () => {
 		});
 		cleanups.push(proxy.close);
 
-		await post(proxy, { model: "claude-opus-5", messages: [] }, { [MARKER_HEADER]: "claude-opus-5" });
+		await post(proxy, { model: "claude-opus-5", messages: [] }, {
+			[MARKER_HEADER]: "claude-opus-5", [GENERATION_HEADER]: "7",
+		});
 		assert.equal(upstream.calls[0]?.body.speed, "fast");
 		assert.match(upstream.calls[0]?.beta ?? "", /fast-mode-2026-02-01/);
 		// The marker is ours; it must never reach upstream.
@@ -282,6 +287,8 @@ describe("fast-mode proxy", () => {
 			[["claude-opus-5", true, "on"]],
 		);
 		assert.equal(outcomes[0]?.evidence.remaining, 4321);
+		assert.equal(outcomes[0]?.generation, 7);
+		assert.equal(upstream.calls[0]?.generation, undefined);
 
 		// Unmarked traffic passes through untouched and isn't reported.
 		await post(proxy, { model: "claude-sonnet-5", messages: [] });

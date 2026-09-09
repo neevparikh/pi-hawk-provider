@@ -110,14 +110,21 @@ Run `/login hawk` again (or restart pi with a valid `HAWK_ACCESS_TOKEN`) to retr
 
 ## Fast mode
 
-Anthropic's fast tier is a per-turn toggle rather than a separate model: run `/fast on` (persisted to `~/.pi/agent/hawk-state.json`; `HAWK_FAST_MODE=1` overrides it for one launch). It applies only to models Anthropic serves fast tier on — currently `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8` and `claude-opus-5`, plus their middleman routing variants such as `-data-retention`, which are the same models on a different route. Every other model passes through on standard tier, so the toggle is a no-op for them. Expect roughly 6x standard pricing on the turns that do run fast.
+Use `/fast on`, `/fast off`, and `/fast status`. This is a **provider-wide preference**, shared by all agents using the same Hawk provider instance, not a per-chat setting. It is saved to `~/.pi/agent/hawk-state.json`. At startup, `HAWK_FAST_MODE=1` / `true` or `0` / `false` overrides the saved preference without rewriting it.
 
-pi-ai doesn't expose `speed: "fast"`, so the extension runs a tiny loopback proxy that adds it (plus the `fast-mode-2026-02-01` beta opt-in) to requests it marks. Two things follow from that:
+Supported models (including known `-data-retention` routing variants):
 
-- **The `↯` badge reports measured state, not intent.** After each turn the proxy reads Anthropic's fast-tier accounting off the response. A call served on fast tier answers with `anthropic-fast-{input,output}-tokens-{limit,remaining,reset}` headers (and `usage.speed: "fast"` in the body); a standard call carries the ordinary `anthropic-ratelimit-*` set and no fast bucket at all. So: fast bucket present means it really was fast, a zeroed `remaining` means the extra-usage pool is empty (badge shows cooldown), absent means the call quietly ran standard. `/fast status` prints the last measurement per model.
-- **Fast mode can't break a turn.** If upstream rejects a request because of the injected bits, the proxy transparently replays the original request without them; the turn succeeds on standard tier and the badge says so.
+- **OpenAI Responses:** `gpt-6-astra`. On sends `service_tier: "fast"`; off explicitly sends `"default"` so an upstream project default cannot keep premium on. Measured fast responses cost **2× applicable standard rates**, including cache rates. Standard fallbacks are not doubled; pi's existing `priority` and `flex` pricing is left intact.
+- **Anthropic:** `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`. The loopback proxy adds `speed: "fast"` and the `fast-mode-2026-02-01` beta header. Fast tier is roughly **6× standard pricing**. If upstream rejects the injected fields, the proxy retries without them.
+- All other models pass through unchanged.
 
-Set `HAWK_FAST_MODE_DISABLE=1` to skip the proxy entirely, or `HAWK_PROVIDER_DEBUG=1` to log each request's injection and tier outcome.
+For supported OpenAI models, the toggle owns `samplingParams.service_tier`, overriding both model and request sampling settings. Other parameters retain pi's model-then-request precedence. Explicit `onPayload` hooks still run last and can replace the payload; badge intent reflects that final payload. Remove old hard-coded fast-tier model overrides when migrating to the toggle.
+
+**The `↯` badge distinguishes intent from measurement.** OpenAI starts each request muted/unconfirmed. Only the terminal Responses `service_tier` confirms fast (`fast` / `priority`, yellow) or standard (`default` / `flex`, dim). Missing, malformed or oversized (>2 Mi characters) terminal events remain unconfirmed, with no provider-added premium cost estimate. Observation is request-local, bounded, byte-transparent and streaming; it neither patches global fetch nor clones the response. Failed/aborted requests do not confirm a tier. Successful length-limited responses can still report their billed tier. Measurements are independent per model, and toggling invalidates in-flight badge reports without changing their cost accounting.
+
+Anthropic measurement still uses its response headers: the fast accounting bucket confirms fast, zero remaining shows cooldown, and absent fast accounting means standard. `/fast status` reports measurements since the last toggle.
+
+`HAWK_FAST_MODE_DISABLE=1` skips only the Anthropic proxy; OpenAI fast mode is unaffected. `HAWK_PROVIDER_DEBUG=1` enables routing diagnostics.
 
 ## Troubleshooting package install
 
@@ -134,5 +141,5 @@ Then restart pi and run `/login`.
 
 ```bash
 npm run check   # tsc --noEmit
-npm test        # node:test; the fast-mode proxy tests use loopback sockets only
+npm test        # node:test; loopback proxy + offline pi SDK integration tests
 ```

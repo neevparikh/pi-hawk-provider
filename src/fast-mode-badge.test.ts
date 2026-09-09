@@ -124,6 +124,43 @@ describe("recordOutcome", () => {
 	});
 });
 
+describe("toggle invalidation and OpenAI outcomes", () => {
+	it("re-arms deduplication and discards old measurements on each toggle", () => {
+		badge.setIntent(true);
+		badge.recordOutcome(outcome({ generation: badge.currentGeneration }));
+		badge.setIntent(false);
+		badge.setIntent(true);
+		assert.equal(badge.lastTier("claude-opus-5"), undefined);
+		assert.equal(badge.publish({ intent: true, actual: "on", model: "claude-opus-5" }), true);
+	});
+
+	it("ignores late Anthropic and OpenAI responses across off/on", () => {
+		badge.setIntent(true);
+		const generation = badge.currentGeneration;
+		badge.setIntent(false);
+		badge.setIntent(true);
+		emitted.length = 0;
+		badge.recordOutcome(outcome({ generation }));
+		badge.recordOpenAIOutcome("gpt-6-astra", true, "on", generation);
+		assert.deepEqual(emitted, []);
+		assert.deepEqual(badge.measurements(), []);
+	});
+
+	it("unknown OpenAI evidence clears an older measurement, without inventing a cooldown", () => {
+		badge.recordOpenAIOutcome("gpt-6-astra", true, "on", badge.currentGeneration);
+		badge.recordOpenAIOutcome("gpt-6-astra", true, undefined, badge.currentGeneration);
+		assert.equal(badge.lastTier("gpt-6-astra"), undefined);
+		assert.deepEqual(emitted.at(-1), { intent: true, actual: undefined, model: "gpt-6-astra" });
+		assert.deepEqual(warnings, []);
+	});
+
+	it("does not claim a tier when Anthropic's standard retry also failed", () => {
+		badge.recordOutcome(outcome({ status: 500, tier: "off", retriedWithoutFastMode: true }));
+		assert.deepEqual(emitted, []);
+		assert.deepEqual(badge.measurements(), []);
+	});
+});
+
 describe("warnOnce / resetWarnings", () => {
 	it("says a thing once until re-armed", () => {
 		badge.warnOnce("unsupported:claude-sonnet-5", "no fast tier here");
