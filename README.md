@@ -124,11 +124,14 @@ For an **Anthropic model whose endpoint you have verified supports fast tier**, 
 {
   "providers": {
     "hawk": {
+      "baseUrl": "https://middleman.prd.metr.org",
       "fastModeModels": ["claude-opus-5"]
     }
   }
 }
 ```
+
+Keep your existing `baseUrl` (or another standard pi provider override) in the entry: pi does not accept an entry containing only extension-specific fields.
 
 IDs are matched exactly after case/whitespace and known routing-suffix normalization, not as globs or prefixes. Both request gates read this setting on subsequent requests; `/fast status` includes configured IDs. Invalid entries are ignored. Only opt in verified models: fast-tier pricing is model-dependent and may be substantially higher. The existing response verification and retry-without-fast-mode behavior still apply. OpenAI routing is unaffected.
 

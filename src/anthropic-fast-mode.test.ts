@@ -17,13 +17,14 @@ it("routes configured Anthropic fast models through both gates and honors the li
 	// This fixture opts in a synthetic endpoint; it does not assert real capability.
 	const id = "claude-fable-5";
 	const modelsPath = join(agentDir, "models.json");
+	let baseUrl: string;
 	function configure(ids: unknown) {
 		writeFileSync(modelsPath, JSON.stringify({ providers: { hawk: {
+			baseUrl,
 			fastModeModels: ids,
 			extraModels: [{ id, backend: "anthropic" }],
 		} } }));
 	}
-	configure([id]);
 	const server = createServer((req, res) => {
 		const chunks: Buffer[] = [];
 		req.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -54,6 +55,8 @@ it("routes configured Anthropic fast models through both gates and honors the li
 		await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
 		const address = server.address();
 		assert.ok(address && typeof address !== "string");
+		baseUrl = `http://127.0.0.1:${address.port}`;
+		configure([id]);
 		Object.assign(process.env, { HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1",
 			HAWK_ACCESS_TOKEN: "test-token", HAWK_FAST_MODE: "1", HAWK_FAST_MODE_DISABLE: "0",
 			HAWK_MIDDLEMAN_BASE_URL: `http://127.0.0.1:${address.port}` });
