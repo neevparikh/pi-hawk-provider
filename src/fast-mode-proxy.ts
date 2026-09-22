@@ -54,7 +54,8 @@ export const MARKER_HEADER = "x-hawk-fast-mode" as const;
 export const GENERATION_HEADER = "x-hawk-fast-mode-generation" as const;
 
 /**
- * Single source of truth for the models Anthropic serves fast tier on.
+ * Built-in allowlist for models Anthropic serves fast tier on.
+ * Explicit provider-config opt-ins are added at request time.
  *
  * Both fast-mode gates derive from this list, so enabling a new model is a
  * one-line change here rather than an edit that has to be mirrored:
@@ -133,6 +134,8 @@ export interface FastTierEvidence {
 }
 
 export interface FastModeProxyOptions {
+  /** Explicitly opted-in model ids, refreshed at request time like provider config. */
+  getAdditionalModelIds?: () => readonly string[];
   /** Called once per marker-bearing request, after the upstream response
    *  headers arrive. Never throws into the proxy — exceptions are swallowed. */
   onOutcome?: (outcome: FastModeOutcome) => void;
@@ -168,18 +171,20 @@ function parseUpstream(raw: string): ParsedUpstream {
  * gate in `isFastModeCapableModel`. This is a belt-and-braces check on the way
  * out: a request only reaches here carrying the marker header if that stricter
  * gate already approved it, so this just guards against injecting `speed` into
- * a body whose model was rewritten between the two points.
+ * a body whose model was rewritten between the two points. Additional configured
+ * ids still require exact normalized matches here.
  */
-export function shouldInject(bodyModel: unknown): boolean {
+export function shouldInject(bodyModel: unknown, additionalModelIds: readonly string[] = []): boolean {
   if (typeof bodyModel !== "string") return false;
   const base = baseModelId(bodyModel);
-  return FAST_MODE_MODEL_IDS.some((id) => base.startsWith(id));
+  return FAST_MODE_MODEL_IDS.some((id) => base.startsWith(id)) ||
+    additionalModelIds.some((id) => baseModelId(id) === base);
 }
 
 /**
  * Whether Anthropic serves fast tier for this upstream model id. The
  * authoritative per-turn gate (`streamHawk` calls it before setting the marker
- * header), so it fails closed: exact match against `FAST_MODE_MODEL_IDS`,
+ * header), so it fails closed: exact match against the built-in and explicit lists,
  * never a prefix, because fast tier is ~6x standard pricing and
  * `claude-opus-50` must not sneak through on the strength of sharing a prefix
  * with `claude-opus-5`.
@@ -187,12 +192,13 @@ export function shouldInject(bodyModel: unknown): boolean {
  * Middleman *routing* suffixes are transparent, though: `-data-retention`
  * picks a zero-retention route to the same model (the upstream response even
  * reports the base id), so capability is a property of the base. Models that
- * simply aren't fast-tier models — Fable, Sonnet, Haiku, OpenAI — are still
- * excluded by the exact match on their base id.
+ * not in either allowlist are excluded by the exact match on their base id.
+ * OpenAI traffic uses its own gate before reaching this Anthropic-only path.
  */
-export function isFastModeCapableModelId(modelId: string): boolean {
+export function isFastModeCapableModelId(modelId: string, additionalModelIds: readonly string[] = []): boolean {
   const base = baseModelId(modelId);
-  return FAST_MODE_MODEL_IDS.some((candidate) => candidate === base);
+  return FAST_MODE_MODEL_IDS.some((candidate) => candidate === base) ||
+    additionalModelIds.some((candidate) => baseModelId(candidate) === base);
 }
 
 /**
@@ -352,7 +358,7 @@ export async function startFastModeProxy(
           try {
             const parsed = JSON.parse(reqBodyBuf.toString("utf8")) as Record<string, unknown>;
             if (typeof parsed.model === "string") bodyModel = parsed.model;
-            if (shouldInject(parsed.model) && parsed.speed !== "fast") {
+            if (shouldInject(parsed.model, options.getAdditionalModelIds?.()) && parsed.speed !== "fast") {
               parsed.speed = "fast";
               outBody = Buffer.from(JSON.stringify(parsed), "utf8");
               injected = true;

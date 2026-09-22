@@ -31,7 +31,7 @@ import {
 	OPENAI_FAST_MODE_MODEL_IDS,
 	supportsOpenAIFastMode,
 } from "./openai-fast-mode.js";
-import { MIDDLEMAN_MODEL_SUFFIXES, stripMiddlemanSuffix } from "./model-ids.js";
+import { MIDDLEMAN_MODEL_SUFFIXES, parseFastModeModelIds, stripMiddlemanSuffix } from "./model-ids.js";
 import { loadState, saveState, statePath } from "./state.js";
 
 const DEFAULT_ISSUER = "https://metr.okta.com/oauth2/aus1ww3m0x41jKp3L1d8/";
@@ -252,6 +252,7 @@ interface HawkConfig {
 	openaiBaseUrl: string;
 	anthropicBaseUrl: string;
 	headers?: Record<string, string>;
+	fastModeModels: string[];
 }
 
 interface ExtraModelConfig {
@@ -273,6 +274,7 @@ interface HawkProviderOverride {
 	baseUrl?: string;
 	headers?: Record<string, string>;
 	extraModels?: ExtraModelConfig[];
+	fastModeModels?: string[];
 }
 
 interface DeviceCodeResponse {
@@ -350,6 +352,7 @@ function readHawkProviderOverride(): HawkProviderOverride {
 			baseUrl: typeof entry.baseUrl === "string" && entry.baseUrl.trim().length > 0 ? entry.baseUrl.trim() : undefined,
 			headers: parseHeaders(entry.headers),
 			extraModels: extraModels.length > 0 ? extraModels : undefined,
+			fastModeModels: parseFastModeModelIds(entry.fastModeModels),
 		};
 	} catch (error) {
 		debugLog("Failed to read Hawk override from models.json", error);
@@ -499,6 +502,7 @@ function getConfig(): HawkConfig {
 		openaiBaseUrl,
 		anthropicBaseUrl,
 		headers: providerOverride.headers,
+		fastModeModels: providerOverride.fastModeModels ?? [],
 	};
 }
 
@@ -1173,7 +1177,7 @@ export function streamHawk(
 	// models. If the proxy failed to start at extension load, fall back to
 	// the direct middleman URL — fast-tier models then silently downgrade to
 	// standard tier (matches pre-proxy behavior).
-	const modelSupportsFast = isFastModeCapableModelId(modelConfig.upstreamModel);
+	const modelSupportsFast = isFastModeCapableModelId(modelConfig.upstreamModel, config.fastModeModels);
 	const useFastMode = fastModeEnabled && modelSupportsFast;
 
 	// When the user has fast mode enabled but picked a model that doesn't
@@ -1187,7 +1191,7 @@ export function streamHawk(
 			`unsupported:${modelConfig.upstreamModel}`,
 			`[pi-hawk-provider] /fast is ON but ${modelConfig.upstreamModel} doesn't support ` +
 				`Anthropic fast tier — those turns run as standard. ` +
-				`Pick one of ${FAST_MODE_MODEL_IDS.join(", ")} to use fast mode.`,
+				`Pick one of ${[...new Set([...FAST_MODE_MODEL_IDS, ...config.fastModeModels])].join(", ")} to use fast mode.`,
 		);
 	}
 
@@ -1343,6 +1347,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	if (!fastModeDisabled) {
 		try {
 			fastModeProxy = await startFastModeProxy(config.anthropicBaseUrl, {
+				getAdditionalModelIds: () => getConfig().fastModeModels,
 				onOutcome: (outcome) => badge.recordOutcome(outcome),
 			});
 			debugLog("Fast-mode proxy started", {
@@ -1444,7 +1449,8 @@ function registerFastModeCommand(pi: ExtensionAPI): void {
 
 			const lines: string[] = [heading];
 			lines.push("  Provider-wide: affects all agents using this Hawk provider instance, not just this chat.");
-			lines.push(`  Anthropic: ${FAST_MODE_MODEL_IDS.join(" / ")} (~6× standard pricing).`);
+			const anthropicModels = [...new Set([...FAST_MODE_MODEL_IDS, ...getConfig().fastModeModels])];
+			lines.push(`  Anthropic: ${anthropicModels.join(" / ")} (premium pricing; built-in models ~6× standard).`);
 			lines.push(`  OpenAI: ${OPENAI_FAST_MODE_MODEL_IDS.join(" / ")} (2× applicable standard pricing).`);
 			lines.push("  Other models pass through unchanged. Premium pricing requires a measured fast response.");
 			lines.push(`  Preference persisted to ${statePath()}.`);
