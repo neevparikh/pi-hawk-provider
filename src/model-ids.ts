@@ -34,3 +34,11 @@ export function baseModelId(modelId: string): string {
 	const normalized = modelId.trim().toLowerCase();
 	return stripMiddlemanSuffix(normalized) ?? normalized;
 }
+
+/** Parse an explicit fast-mode opt-in list. Invalid entries never broaden it. */
+export function parseFastModeModelIds(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	return [...new Set(raw
+		.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+		.map(baseModelId))];
+}

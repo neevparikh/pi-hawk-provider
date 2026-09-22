@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { baseModelId, stripMiddlemanSuffix } from "./model-ids.js";
+import { baseModelId, parseFastModeModelIds, stripMiddlemanSuffix } from "./model-ids.js";
+
+describe("parseFastModeModelIds", () => {
+	it("ignores malformed lists and normalizes only explicit string ids", () => {
+		for (const raw of [undefined, null, true, "claude-opus-5", {}]) {
+			assert.deepEqual(parseFastModeModelIds(raw), []);
+		}
+		assert.deepEqual(parseFastModeModelIds([
+			"  CLAUDE-OPUS-5 ", "claude-opus-5-data-retention", "", " ", 1, null,
+			"claude-opus-5-experimental",
+		]), ["claude-opus-5", "claude-opus-5-experimental"]);
+	});
+});
 
 describe("stripMiddlemanSuffix", () => {
 	it("removes a known routing suffix", () => {

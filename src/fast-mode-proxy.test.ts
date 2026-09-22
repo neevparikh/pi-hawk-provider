@@ -45,6 +45,15 @@ describe("isFastModeCapableModelId", () => {
 		assert.equal(isFastModeCapableModelId("gpt-5.6-luna"), false);
 	});
 
+	it("requires an explicit opt-in for additional models, never a prefix", () => {
+		const additional = ["claude-opus-5-experimental"];
+		assert.equal(isFastModeCapableModelId(additional[0]!), false);
+		assert.equal(isFastModeCapableModelId(additional[0]!, additional), true);
+		assert.equal(isFastModeCapableModelId(" CLAUDE-OPUS-5-EXPERIMENTAL-data-retention ", additional), true);
+		assert.equal(isFastModeCapableModelId("claude-opus-5-experimental-extra", additional), false);
+		assert.equal(isFastModeCapableModelId("claude-sonnet-5", additional), false);
+	});
+
 	it("fails closed on lookalikes", () => {
 		// Exact match on the base id, never a prefix: a 6x price tag is not
 		// something to hand out on the strength of a shared prefix.
@@ -260,6 +269,37 @@ async function post(
 }
 
 describe("fast-mode proxy", () => {
+	it("refreshes explicit extra ids and requires a marker before injection", async () => {
+		// A synthetic opt-in tests configuration, not this model's real capability.
+		const model = "claude-fable-5";
+		const upstream = await startUpstream((_req, res) => {
+			res.writeHead(200, { "anthropic-fast-input-tokens-remaining": "10" });
+			res.end("{}");
+		});
+		cleanups.push(upstream.close);
+		let additional: string[] = [];
+		const outcomes: FastModeOutcome[] = [];
+		const proxy = await startFastModeProxy(upstream.url, {
+			getAdditionalModelIds: () => additional,
+			onOutcome: (o) => outcomes.push(o),
+		});
+		cleanups.push(proxy.close);
+		await post(proxy, { model }, { [MARKER_HEADER]: model });
+		assert.equal(upstream.calls[0]?.body.speed, undefined);
+		additional = [model];
+		await post(proxy, { model });
+		assert.equal(upstream.calls[1]?.body.speed, undefined);
+		await post(proxy, { model: `${model}-data-retention` }, { [MARKER_HEADER]: model });
+		assert.equal(upstream.calls[2]?.body.speed, "fast");
+		assert.match(upstream.calls[2]?.beta ?? "", /fast-mode-2026-02-01/);
+		await post(proxy, { model: `${model}-extra` }, { [MARKER_HEADER]: model });
+		assert.equal(upstream.calls[3]?.body.speed, undefined);
+		additional = [];
+		await post(proxy, { model }, { [MARKER_HEADER]: model });
+		assert.equal(upstream.calls[4]?.body.speed, undefined);
+		assert.deepEqual(outcomes.map((o) => o.tier), ["off", "on", "off", "off"]);
+	});
+
 	it("injects speed + beta only for marked requests, and reports the tier it can prove", async () => {
 		const upstream = await startUpstream((_req, res) => {
 			res.writeHead(200, {
