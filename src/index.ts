@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
@@ -21,8 +22,10 @@ import {
 	isFastModeCapableModelId,
 	MARKER_HEADER as FAST_MODE_MARKER_HEADER,
 	GENERATION_HEADER as FAST_MODE_GENERATION_HEADER,
+	REQUEST_HEADER as FAST_MODE_REQUEST_HEADER,
 	startFastModeProxy,
 } from "./fast-mode-proxy.js";
+import { anthropicFastModePriceMultiplier, scaleUsageCost } from "./anthropic-fast-pricing.js";
 import { FastModeBadge } from "./fast-mode-badge.js";
 import {
 	fastModeSamplingParams,
@@ -174,6 +177,14 @@ const providerModels: ProviderModelConfig[] = [];
  * models silently downgrade to standard tier in that case.
  */
 let fastModeProxy: FastModeProxyHandle | undefined;
+
+/**
+ * Measured tier per in-flight Anthropic fast-mode request, keyed by the
+ * `REQUEST_HEADER` correlation id. The proxy fills it when response headers
+ * arrive; `streamAnthropicWithFastPricing` reads and clears it when the turn
+ * finishes, so only turns actually served on fast tier are re-priced.
+ */
+const anthropicFastTierByRequest = new Map<string, "on" | "off" | "cooldown">();
 
 /**
  * Reference to the live `pi` API, captured at extension load so non-default
@@ -848,7 +859,8 @@ function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[]
 		// model variant; replaced by the global `/fast on|off` toggle.
 		// Capability check is now per-turn in `streamHawk` via
 		// `isFastModeCapableModel`. Cost is reported as standard tier in the
-		// picker — the `/fast on` handler warns about the ~6× multiplier.
+		// picker; measured fast turns are re-priced in
+		// `streamAnthropicWithFastPricing`.
 	}
 
 	models.sort((a, b) => {
@@ -1240,7 +1252,8 @@ export function streamHawk(
 		// instead of the legacy `thinking.type=enabled` shape (which Opus 4.7 rejects).
 		compat: (modelConfig.compat ?? model.compat) as Model<"anthropic-messages">["compat"],
 	};
-	return streamSimpleAnthropic(anthropicModel, context, {
+	const fastRequestId = useFastMode && fastModeProxy ? randomUUID() : undefined;
+	const source = streamSimpleAnthropic(anthropicModel, context, {
 		...(options ?? {}),
 		apiKey: accessToken,
 		// We pass `speed` through in case a future pi-ai version honors it
@@ -1257,8 +1270,54 @@ export function streamHawk(
 				[FAST_MODE_MARKER_HEADER]: modelConfig.id,
 				[FAST_MODE_GENERATION_HEADER]: String(badge.currentGeneration),
 			} : {}),
+			...(fastRequestId ? { [FAST_MODE_REQUEST_HEADER]: fastRequestId } : {}),
 		},
 	});
+	if (!fastRequestId) return source;
+	return streamAnthropicWithFastPricing(source, anthropicModel, fastRequestId);
+}
+
+/**
+ * pi-ai prices Anthropic turns at standard rates. When the proxy measured this
+ * request as served on fast tier, re-price the final usage at the model's
+ * published fast-mode multiplier. Standard fallbacks, cooldowns and silent
+ * downgrades keep standard pricing.
+ */
+function streamAnthropicWithFastPricing(
+	source: AssistantMessageEventStream,
+	model: Model<"anthropic-messages">,
+	requestId: string,
+): AssistantMessageEventStream {
+	const result = createAssistantMessageEventStream();
+	(async () => {
+		try {
+			for await (const event of source) {
+				if (event.type === "done" || event.type === "error") {
+					const message = event.type === "done" ? event.message : event.error;
+					if (anthropicFastTierByRequest.get(requestId) === "on" && message.usage) {
+						const multiplier = anthropicFastModePriceMultiplier(model.id);
+						if (multiplier === undefined) {
+							badge.warnOnce(
+								`fast-price-unknown:${model.id}`,
+								`[pi-hawk-provider] ${model.id} was served on fast tier but has no known fast-mode ` +
+									`price; its cost is reported at standard rates.`,
+							);
+						} else {
+							// Recompute from standard rates first so the multiplier is
+							// applied exactly once, whatever pi-ai reported.
+							calculateCost(model, message.usage);
+							scaleUsageCost(message.usage.cost, multiplier);
+						}
+					}
+				}
+				result.push(event);
+			}
+		} finally {
+			anthropicFastTierByRequest.delete(requestId);
+			result.end();
+		}
+	})();
+	return result;
 }
 
 function streamFastOpenAI(
@@ -1348,7 +1407,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		try {
 			fastModeProxy = await startFastModeProxy(config.anthropicBaseUrl, {
 				getAdditionalModelIds: () => getConfig().fastModeModels,
-				onOutcome: (outcome) => badge.recordOutcome(outcome),
+				onOutcome: (outcome) => {
+					// Retries of the same request overwrite earlier attempts: the
+					// last response is the one that produced the turn.
+					if (outcome.requestId) anthropicFastTierByRequest.set(outcome.requestId, outcome.tier);
+					badge.recordOutcome(outcome);
+				},
 			});
 			debugLog("Fast-mode proxy started", {
 				port: fastModeProxy.port,
@@ -1450,7 +1514,7 @@ function registerFastModeCommand(pi: ExtensionAPI): void {
 			const lines: string[] = [heading];
 			lines.push("  Provider-wide: affects all agents using this Hawk provider instance, not just this chat.");
 			const anthropicModels = [...new Set([...FAST_MODE_MODEL_IDS, ...getConfig().fastModeModels])];
-			lines.push(`  Anthropic: ${anthropicModels.join(" / ")} (premium pricing; built-in models ~6× standard).`);
+			lines.push(`  Anthropic: ${anthropicModels.join(" / ")} (premium pricing; built-in models 2× standard).`);
 			lines.push(`  OpenAI: ${OPENAI_FAST_MODE_MODEL_IDS.join(" / ")} (2× applicable standard pricing).`);
 			lines.push("  Other models pass through unchanged. Premium pricing requires a measured fast response.");
 			lines.push(`  Preference persisted to ${statePath()}.`);

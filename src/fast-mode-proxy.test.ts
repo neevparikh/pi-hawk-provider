@@ -1,7 +1,7 @@
 /**
  * Tests for the fast-mode gates and the proxy's request/response handling.
  *
- * Fast tier is ~6x standard pricing and, until this file existed, the only
+ * Fast tier is premium-priced and, until this file existed, the only
  * feedback loop on any of it was the bill: the provider claimed "fast" because
  * a proxy process was alive, not because a request had been mutated or a
  * response had come back on fast tier. The proxy tests run against a real
@@ -19,6 +19,7 @@ import {
 	looksLikeSpeedRejection,
 	MARKER_HEADER,
 	GENERATION_HEADER,
+	REQUEST_HEADER,
 	readFastTierEvidence,
 	shouldInject,
 	startFastModeProxy,
@@ -28,6 +29,7 @@ describe("isFastModeCapableModelId", () => {
 	it("accepts the fast-tier models", () => {
 		assert.equal(isFastModeCapableModelId("claude-opus-5"), true);
 		assert.equal(isFastModeCapableModelId("claude-opus-4-8"), true);
+		assert.equal(isFastModeCapableModelId("claude-opus-5-5"), true);
 		assert.equal(isFastModeCapableModelId("CLAUDE-OPUS-5"), true);
 	});
 
@@ -55,7 +57,7 @@ describe("isFastModeCapableModelId", () => {
 	});
 
 	it("fails closed on lookalikes", () => {
-		// Exact match on the base id, never a prefix: a 6x price tag is not
+		// Exact match on the base id, never a prefix: a premium price tag is not
 		// something to hand out on the strength of a shared prefix.
 		assert.equal(isFastModeCapableModelId("claude-opus-50"), false);
 		assert.equal(isFastModeCapableModelId("claude-opus-5-experimental"), false);
@@ -213,6 +215,7 @@ interface UpstreamCapture {
 	beta: string | undefined;
 	marker: string | string[] | undefined;
 	generation: string | string[] | undefined;
+	requestId: string | string[] | undefined;
 }
 
 /** Fake middleman. `respond` decides what each request gets back, so a test
@@ -236,6 +239,7 @@ async function startUpstream(
 				beta: req.headers["anthropic-beta"] as string | undefined,
 				marker: req.headers[MARKER_HEADER],
 				generation: req.headers[GENERATION_HEADER],
+				requestId: req.headers[REQUEST_HEADER],
 			});
 			respond(req, res, calls.length);
 		});
@@ -316,7 +320,7 @@ describe("fast-mode proxy", () => {
 		cleanups.push(proxy.close);
 
 		await post(proxy, { model: "claude-opus-5", messages: [] }, {
-			[MARKER_HEADER]: "claude-opus-5", [GENERATION_HEADER]: "7",
+			[MARKER_HEADER]: "claude-opus-5", [GENERATION_HEADER]: "7", [REQUEST_HEADER]: "req-1",
 		});
 		assert.equal(upstream.calls[0]?.body.speed, "fast");
 		assert.match(upstream.calls[0]?.beta ?? "", /fast-mode-2026-02-01/);
@@ -329,6 +333,8 @@ describe("fast-mode proxy", () => {
 		assert.equal(outcomes[0]?.evidence.remaining, 4321);
 		assert.equal(outcomes[0]?.generation, 7);
 		assert.equal(upstream.calls[0]?.generation, undefined);
+		assert.equal(outcomes[0]?.requestId, "req-1");
+		assert.equal(upstream.calls[0]?.requestId, undefined);
 
 		// Unmarked traffic passes through untouched and isn't reported.
 		await post(proxy, { model: "claude-sonnet-5", messages: [] });
