@@ -115,7 +115,7 @@ Use `/fast on`, `/fast off`, and `/fast status`. This is a **provider-wide prefe
 Supported models (including known `-data-retention` routing variants):
 
 - **OpenAI Responses:** `gpt-6-astra`. On sends `service_tier: "fast"`; off explicitly sends `"default"` so an upstream project default cannot keep premium on. Measured fast responses cost **2× applicable standard rates**, including cache rates. Standard fallbacks are not doubled; pi's existing `priority` and `flex` pricing is left intact.
-- **Anthropic:** `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`. The loopback proxy adds `speed: "fast"` and the `fast-mode-2026-02-01` beta header. Fast tier is roughly **6× standard pricing**. If upstream rejects the injected fields, the proxy retries without them.
+- **Anthropic:** `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`. The loopback proxy adds `speed: "fast"` and the `fast-mode-2026-02-01` beta header. If upstream rejects the injected fields, the proxy retries without them. Responses measured as fast tier are priced at Anthropic's published fast-mode rates — **2× standard** for Opus 5.5, Opus 5 and Opus 4.8, including cache rates. Standard fallbacks and silent downgrades keep standard pricing. Models without a published fast rate (including explicit opt-ins below) are reported at standard rates, with a one-time warning.
 - All other models pass through unchanged unless explicitly opted in below.
 
 For an **Anthropic model whose endpoint you have verified supports fast tier**, add its exact upstream ID to `providers.hawk.fastModeModels` in `~/.pi/agent/models.json`. This additive allowlist does not register models or turn the provider-wide toggle on; the model must already be available and `/fast on` must be enabled. Example configuration (the shown ID is already built in):
@@ -133,7 +133,7 @@ For an **Anthropic model whose endpoint you have verified supports fast tier**, 
 
 Keep your existing `baseUrl` (or another standard pi provider override) in the entry: pi does not accept an entry containing only extension-specific fields.
 
-IDs are matched exactly after case/whitespace and known routing-suffix normalization, not as globs or prefixes. Both request gates read this setting on subsequent requests; `/fast status` includes configured IDs. Invalid entries are ignored. Only opt in verified models: fast-tier pricing is model-dependent and may be substantially higher. The existing response verification and retry-without-fast-mode behavior still apply. OpenAI routing is unaffected.
+IDs are matched exactly after case/whitespace and known routing-suffix normalization, not as globs or prefixes. Both request gates read this setting on subsequent requests; `/fast status` includes configured IDs. Invalid entries are ignored. Only opt in verified models: fast-tier pricing is model-dependent, and opted-in models without a known fast rate are reported at standard rates. The existing response verification and retry-without-fast-mode behavior still apply. OpenAI routing is unaffected.
 
 For supported OpenAI models, the toggle owns `samplingParams.service_tier`, overriding both model and request sampling settings. Other parameters retain pi's model-then-request precedence. Explicit `onPayload` hooks still run last and can replace the payload; badge intent reflects that final payload. Remove old hard-coded fast-tier model overrides when migrating to the toggle.
 

@@ -52,6 +52,9 @@ const FAST_MODE_BETA = "fast-mode-2026-02-01";
 export const MARKER_HEADER = "x-hawk-fast-mode" as const;
 /** Local toggle generation, stripped alongside the model marker. */
 export const GENERATION_HEADER = "x-hawk-fast-mode-generation" as const;
+/** Per-request correlation id, echoed on the outcome so the caller can price
+ *  the matching turn at fast-tier rates. Stripped alongside the marker. */
+export const REQUEST_HEADER = "x-hawk-fast-mode-request" as const;
 
 /**
  * Built-in allowlist for models Anthropic serves fast tier on.
@@ -71,6 +74,7 @@ export const FAST_MODE_MODEL_IDS = [
   "claude-opus-4-7",
   "claude-opus-4-8",
   "claude-opus-5",
+  "claude-opus-5-5",
 ] as const;
 
 /** What actually happened to one fast-mode request, reported after the
@@ -82,6 +86,8 @@ export interface FastModeOutcome {
   hawkModelId: string;
   /** Toggle generation at request dispatch, for ignoring stale badge reports. */
   generation?: number;
+  /** Correlation id from `REQUEST_HEADER`, when the caller set one. */
+  requestId?: string;
   /** Model id in the request body (may carry a routing suffix). */
   bodyModel: string | null;
   /** Whether `speed: "fast"` + the beta header actually went out. */
@@ -185,7 +191,7 @@ export function shouldInject(bodyModel: unknown, additionalModelIds: readonly st
  * Whether Anthropic serves fast tier for this upstream model id. The
  * authoritative per-turn gate (`streamHawk` calls it before setting the marker
  * header), so it fails closed: exact match against the built-in and explicit lists,
- * never a prefix, because fast tier is ~6x standard pricing and
+ * never a prefix, because fast tier is premium-priced and
  * `claude-opus-50` must not sneak through on the strength of sharing a prefix
  * with `claude-opus-5`.
  *
@@ -276,7 +282,7 @@ export function readFastTierEvidence(headers: IncomingHttpHeaders): FastTierEvid
  *
  * The last case is the one the old "the proxy is running, so we're fast"
  * assumption got wrong, and it's the case that matters: it's the difference
- * between believing you're paying 6x for speed and actually getting it.
+ * between believing you're paying a premium for speed and actually getting it.
  */
 export function classifyFastTier(
   injected: boolean,
@@ -346,6 +352,8 @@ export async function startFastModeProxy(
       const rawGeneration = clientReq.headers[GENERATION_HEADER];
       const generation = typeof rawGeneration === "string" && /^\d+$/.test(rawGeneration)
         ? Number(rawGeneration) : undefined;
+      const rawRequestId = clientReq.headers[REQUEST_HEADER];
+      const requestId = typeof rawRequestId === "string" && rawRequestId.trim() ? rawRequestId.trim() : undefined;
 
       // Default: pass through unchanged.
       let outBody = reqBodyBuf;
@@ -384,6 +392,7 @@ export async function startFastModeProxy(
           options.onOutcome({
             hawkModelId,
             ...(generation !== undefined ? { generation } : {}),
+            ...(requestId !== undefined ? { requestId } : {}),
             bodyModel,
             injected: didInject,
             tier: classifyFastTier(didInject, evidence),
@@ -404,7 +413,7 @@ export async function startFastModeProxy(
         const lower = k.toLowerCase();
         if (lower === "host" || lower === "connection" || lower === "content-length") continue;
         // Marker is internal — strip it so it doesn't reach upstream.
-        if (lower === MARKER_HEADER || lower === GENERATION_HEADER) continue;
+        if (lower === MARKER_HEADER || lower === GENERATION_HEADER || lower === REQUEST_HEADER) continue;
         baseHeaders[k] = v;
       }
       baseHeaders["host"] = upstream.host;
