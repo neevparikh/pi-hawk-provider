@@ -114,7 +114,7 @@ Use `/fast on`, `/fast off`, and `/fast status`. This is a **provider-wide prefe
 
 Supported models (including known `-data-retention` routing variants):
 
-- **OpenAI Responses:** `gpt-6-astra`. On sends `service_tier: "fast"`; off explicitly sends `"default"` so an upstream project default cannot keep premium on. Measured fast responses cost **2× applicable standard rates**, including cache rates. Standard fallbacks are not doubled; pi's existing `priority` and `flex` pricing is left intact.
+- **OpenAI Responses:** `gpt-6-astra`, `gpt-6.1-sol`. On sends `service_tier: "fast"`; off explicitly sends `"default"` so an upstream project default cannot keep premium on. Measured fast responses cost **2× applicable standard rates**, including cache rates. Standard fallbacks are not doubled; pi's existing `priority` and `flex` pricing is left intact. GPT-6.1 Sol was verified on Hawk to serve `service_tier: "fast"`; its fast-tier billing has not been measured separately, so the same 2× rule is applied. GPT-6.1 Sol is not yet in pi-ai's built-in catalog, so discovery skips it — register it with `extraModels` (see below) to use it.
 - **Anthropic:** `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`. The loopback proxy adds `speed: "fast"` and the `fast-mode-2026-02-01` beta header. If upstream rejects the injected fields, the proxy retries without them. Responses measured as fast tier are priced at Anthropic's published fast-mode rates — **2× standard** for Opus 5.5, Opus 5 and Opus 4.8, including cache rates. Standard fallbacks and silent downgrades keep standard pricing. Models without a published fast rate (including explicit opt-ins below) are reported at standard rates, with a one-time warning.
 - All other models pass through unchanged unless explicitly opted in below.
 
@@ -132,6 +132,29 @@ For an **Anthropic model whose endpoint you have verified supports fast tier**, 
 ```
 
 Keep your existing `baseUrl` (or another standard pi provider override) in the entry: pi does not accept an entry containing only extension-specific fields.
+
+Permitted models that pi-ai's built-in catalog doesn't know yet (e.g. `gpt-6.1-sol`) can be registered with `providers.hawk.extraModels`. Fast mode applies to them if their ID is supported:
+
+```json
+{
+  "providers": {
+    "hawk": {
+      "baseUrl": "https://middleman.prd.metr.org",
+      "extraModels": [
+        {
+          "id": "gpt-6.1-sol",
+          "name": "GPT-6.1 Sol (Hawk)",
+          "backend": "openai",
+          "openaiApi": "openai-responses",
+          "reasoning": true,
+          "contextWindow": 272000,
+          "maxTokens": 128000
+        }
+      ]
+    }
+  }
+}
+```
 
 IDs are matched exactly after case/whitespace and known routing-suffix normalization, not as globs or prefixes. Both request gates read this setting on subsequent requests; `/fast status` includes configured IDs. Invalid entries are ignored. Only opt in verified models: fast-tier pricing is model-dependent, and opted-in models without a known fast rate are reported at standard rates. The existing response verification and retry-without-fast-mode behavior still apply. OpenAI routing is unaffected.
 

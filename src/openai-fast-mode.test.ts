@@ -29,9 +29,13 @@ function sse(text: string, chunkSize = 8192) {
 }
 
 describe("OpenAI tier observation", () => {
-	it("allowlists Astra and known routing variants, not arbitrary GPT models", () => {
-		for (const id of ["gpt-6-astra", "GPT-6-ASTRA", "gpt-6-astra-data-retention"]) assert.ok(supportsOpenAIFastMode(id));
-		for (const id of ["gpt-5.5", "gpt-6-astra-pro", "claude-opus-5"]) assert.ok(!supportsOpenAIFastMode(id));
+	it("allowlists Astra, GPT-6.1 Sol and known routing variants, not arbitrary GPT models", () => {
+		for (const id of ["gpt-6-astra", "GPT-6-ASTRA", "gpt-6-astra-data-retention", "gpt-6.1-sol", "gpt-6.1-sol-data-retention"]) {
+			assert.ok(supportsOpenAIFastMode(id));
+		}
+		for (const id of ["gpt-5.5", "gpt-6-astra-pro", "gpt-6-sol", "gpt-6.1-sol-pro", "gpt-5.6-sol", "claude-opus-5"]) {
+			assert.ok(!supportsOpenAIFastMode(id));
+		}
 		assert.equal(openAIFastTier("priority"), "on");
 		assert.equal(openAIFastTier("auto"), undefined);
 	});
@@ -140,6 +144,11 @@ describe("provider integration with pi's real extension loader and Responses par
 		delete process.env.HAWK_FAST_MODE;
 		mkdirSync(join(home, ".pi", "agent"), { recursive: true });
 		writeFileSync(join(home, ".pi", "agent", "hawk-state.json"), JSON.stringify({ fastMode: true, preserved: "yes" }));
+		// GPT-6.1 Sol is not in pi-ai's built-in catalog yet, so it can only be
+		// registered via `extraModels`; fast mode must still apply to it.
+		writeFileSync(join(home, ".pi", "agent", "models.json"), JSON.stringify({ providers: { hawk: {
+			baseUrl: "https://middleman.example", extraModels: [{ id: "gpt-6.1-sol", backend: "openai",
+				openaiApi: "openai-responses", reasoning: true }] } } }));
 		globalThis.fetch = async (input) => {
 			assert.match(String(input), /\/permitted_models$/);
 			return Response.json(["gpt-6-astra", "gpt-6-astra-data-retention", "gpt-5.4", "claude-opus-5"]);
@@ -164,6 +173,20 @@ describe("provider integration with pi's real extension loader and Responses par
 		rmSync(home, { recursive: true, force: true });
 	});
 	beforeEach(async () => { await command("on"); events.length = 0; notices.length = 0; });
+
+	it("sends fast for GPT-6.1 Sol registered via extraModels and prices the measured tier", async () => {
+		let request: Record<string, unknown> | undefined;
+		const result = await complete("fast", { onPayload: (body) => { request = body as Record<string, unknown>; } }, "gpt-6.1-sol");
+		assert.equal(request?.model, "gpt-6.1-sol");
+		assert.equal(request?.service_tier, "fast");
+		assert.deepEqual(events, [{ intent: true, model: "gpt-6.1-sol" }, { intent: true, actual: "on", model: "gpt-6.1-sol" }]);
+		assert.equal(result.usage.cost.output, 0.002);
+		await command("off");
+		events.length = 0;
+		await complete("default", { onPayload: (body) => { request = body as Record<string, unknown>; } }, "gpt-6.1-sol");
+		assert.equal(request?.service_tier, "default");
+		assert.deepEqual(events.at(-1), { intent: false, actual: "off", model: "gpt-6.1-sol" });
+	});
 
 	it("sends fast, preserves payload hooks/headers and corrects all cost components exactly once", async () => {
 		let request: Record<string, unknown> | undefined;
