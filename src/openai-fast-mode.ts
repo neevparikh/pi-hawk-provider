@@ -2,7 +2,7 @@ import { baseModelId } from "./model-ids.js";
 import type { FastModeTier } from "./fast-mode-badge.js";
 
 /** Deliberately opt in models individually, not all OpenAI routes. */
-export const OPENAI_FAST_MODE_MODEL_IDS = ["gpt-6-astra"] as const;
+export const OPENAI_FAST_MODE_MODEL_IDS = ["gpt-6-astra", "gpt-6.1-sol"] as const;
 
 export function supportsOpenAIFastMode(model: string): boolean {
 	return (OPENAI_FAST_MODE_MODEL_IDS as readonly string[]).includes(baseModelId(model));

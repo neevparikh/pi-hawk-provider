@@ -1482,7 +1482,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
 function registerFastModeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("fast", {
-		description: "Toggle provider-wide Hawk fast mode for Opus and Astra (on/off/status)",
+		description: "Toggle provider-wide Hawk fast mode for Opus, Astra and Sol (on/off/status)",
 		getArgumentCompletions: (prefix: string) => {
 			const opts = ["on", "off", "status"];
 			const matches = opts.filter((o) => o.startsWith(prefix.toLowerCase()));
