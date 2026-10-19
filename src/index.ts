@@ -25,6 +25,7 @@ import {
 	REQUEST_HEADER as FAST_MODE_REQUEST_HEADER,
 	startFastModeProxy,
 } from "./fast-mode-proxy.js";
+import { withSessionHeader } from "./session-header.js";
 import { anthropicFastModePriceMultiplier, scaleUsageCost } from "./anthropic-fast-pricing.js";
 import { FastModeBadge } from "./fast-mode-badge.js";
 import {
@@ -1149,9 +1150,10 @@ export function streamHawk(
 			baseUrl: config.openaiBaseUrl,
 		});
 
-		const openaiHeaders = modelConfig.headers
-			? { ...(options?.headers ?? {}), ...modelConfig.headers }
-			: options?.headers;
+		const openaiHeaders = withSessionHeader(
+			modelConfig.headers ? { ...(options?.headers ?? {}), ...modelConfig.headers } : options?.headers,
+			options?.sessionId,
+		);
 
 		if (openaiApi === "openai-responses") {
 			const openaiModel: Model<"openai-responses"> = {
@@ -1263,6 +1265,7 @@ export function streamHawk(
 		headers: {
 			...(options?.headers ?? {}),
 			...(modelConfig.headers ?? {}),
+			...withSessionHeader(undefined, options?.sessionId),
 			Authorization: `Bearer ${accessToken}`,
 			// Marker value is the hawk model id so the proxy can attribute its
 			// outcome report to the right badge without any correlation state.

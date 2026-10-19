@@ -88,6 +88,14 @@ Example:
 - `HAWK_ANTHROPIC_BASE_URL` (default: `${HAWK_MIDDLEMAN_BASE_URL}/anthropic`)
 - `HAWK_PROVIDER_DEBUG` (`1` or `true` to print discovery/routing debug logs to stderr)
 
+## Session id header
+
+Every request carries pi's session id as `x-metr-session-id`. Middleman keeps
+`x-metr-*` headers in its traffic log's `correlation` bag, so Hawk's
+`GET /traffic` shows which pi session each of your requests came from (the id is
+in the session file's name). Compaction and branch-summary requests get fresh
+session ids from pi, so they appear as their own short sessions.
+
 ## Model discovery
 
 When a valid Hawk access token is available, the extension discovers models by POSTing to:
