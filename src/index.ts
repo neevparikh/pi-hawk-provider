@@ -1276,8 +1276,46 @@ export function streamHawk(
 			...(fastRequestId ? { [FAST_MODE_REQUEST_HEADER]: fastRequestId } : {}),
 		},
 	});
-	if (!fastRequestId) return source;
-	return streamAnthropicWithFastPricing(source, anthropicModel, fastRequestId);
+	const pinned = pinAnthropicMessageModel(source, anthropicModel.id);
+	if (!fastRequestId) return pinned;
+	return streamAnthropicWithFastPricing(pinned, anthropicModel, fastRequestId);
+}
+
+/**
+ * Keep `message.model` equal to the model id we requested.
+ *
+ * pi-ai 0.85.x overwrites `model` with whatever `message_start` reports, and
+ * middleman reports the *upstream* model there: requests for
+ * `claude-opus-5-cvp-with-data-retention` come back as `claude-opus-5`. On the
+ * next turn pi-ai's `transformMessages` compares `message.model` against the
+ * requested id, decides the turn came from a different model, and replays its
+ * thinking as plain `text` (signature dropped). Re-pinning `model` keeps the
+ * turn recognised as ours; the reported id is kept in `responseModel`, which
+ * is where newer pi-ai versions put it anyway.
+ */
+export function pinAnthropicMessageModel(
+	source: AssistantMessageEventStream,
+	modelId: string,
+): AssistantMessageEventStream {
+	const result = createAssistantMessageEventStream();
+	const pin = (message: { model: string; responseModel?: string } | undefined) => {
+		if (!message || message.model === modelId) return;
+		if (message.model && message.responseModel === undefined) message.responseModel = message.model;
+		message.model = modelId;
+	};
+	(async () => {
+		try {
+			for await (const event of source) {
+				if ("partial" in event) pin(event.partial);
+				if (event.type === "done") pin(event.message);
+				if (event.type === "error") pin(event.error);
+				result.push(event);
+			}
+		} finally {
+			result.end();
+		}
+	})();
+	return result;
 }
 
 /**
