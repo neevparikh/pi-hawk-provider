@@ -75,6 +75,7 @@ export const FAST_MODE_MODEL_IDS = [
   "claude-opus-4-8",
   "claude-opus-5",
   "claude-opus-5-5",
+  "claude-fable-5-2",
 ] as const;
 
 /** What actually happened to one fast-mode request, reported after the
