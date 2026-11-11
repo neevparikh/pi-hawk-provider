@@ -13,10 +13,12 @@ describe("anthropicFastModePriceMultiplier", () => {
 		assert.equal(anthropicFastModePriceMultiplier("claude-opus-5"), 2);
 		assert.equal(anthropicFastModePriceMultiplier("claude-opus-4-8"), 2);
 		assert.equal(anthropicFastModePriceMultiplier("CLAUDE-OPUS-5-5-data-retention"), 2);
+		assert.equal(anthropicFastModePriceMultiplier("claude-fable-5-2-data-retention"), 2);
 	});
 
 	it("has no price for models without a published fast rate", () => {
 		assert.equal(anthropicFastModePriceMultiplier("claude-opus-4-6"), undefined);
+		assert.equal(anthropicFastModePriceMultiplier("claude-fable-5-1"), undefined);
 		assert.equal(anthropicFastModePriceMultiplier("claude-sonnet-5"), undefined);
 		assert.equal(anthropicFastModePriceMultiplier("claude-opus-50"), undefined);
 	});

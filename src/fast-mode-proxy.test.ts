@@ -37,10 +37,11 @@ describe("isFastModeCapableModelId", () => {
 		// `-data-retention` picks a zero-retention route to the same model, so
 		// capability belongs to the base id.
 		assert.equal(isFastModeCapableModelId("claude-opus-5-data-retention"), true);
+		assert.equal(isFastModeCapableModelId("claude-fable-5-2-data-retention"), true);
 	});
 
 	it("still rejects models that simply aren't fast-tier models", () => {
-		// Fable has no fast tier, with or without a routing suffix.
+		// Fable 5 has no fast tier (Fable 5.2 does), with or without a routing suffix.
 		assert.equal(isFastModeCapableModelId("claude-fable-5"), false);
 		assert.equal(isFastModeCapableModelId("claude-fable-5-data-retention"), false);
 		assert.equal(isFastModeCapableModelId("claude-sonnet-5"), false);

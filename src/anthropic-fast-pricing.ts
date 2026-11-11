@@ -7,6 +7,7 @@
  *
  * Multipliers are keyed by base model id (routing suffixes stripped) and come
  * from Anthropic's published fast-mode pricing, which is model-dependent:
+ *   - Fable 5.2:         $16 / $80 per MTok (standard $8 / $40)  → 2×
  *   - Opus 5.5:          $8 / $40 per MTok  (standard $4 / $20)  → 2×
  *   - Opus 5, Opus 4.8:  $10 / $50 per MTok (standard $5 / $25)  → 2×
  * Prompt-caching multipliers apply on top of fast-mode rates, so cache reads
@@ -21,6 +22,7 @@ export const ANTHROPIC_FAST_MODE_PRICE_MULTIPLIERS: Readonly<Record<string, numb
 	"claude-opus-4-8": 2,
 	"claude-opus-5": 2,
 	"claude-opus-5-5": 2,
+	"claude-fable-5-2": 2,
 };
 
 export function anthropicFastModePriceMultiplier(modelId: string): number | undefined {
