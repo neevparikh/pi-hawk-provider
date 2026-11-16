@@ -196,6 +196,15 @@ Permitted models that pi-ai's built-in catalog doesn't know yet (e.g. `gpt-6.1-s
 }
 ```
 
+An Anthropic extra model gets none of the `compat` flags pi-ai's catalog sets for built-in models, so set the ones its upstream needs:
+
+```json
+"compat": { "forceAdaptiveThinking": true, "supportsMidConvoEffort": true }
+```
+
+- `forceAdaptiveThinking`: send adaptive thinking instead of the legacy budget shape, which newer models reject.
+- `supportsMidConvoEffort`: send per-turn effort messages and thinking binding controls. Set it for models that bind signed thinking to the conversation prefix (e.g. `claude-fable-5-2`). Without it, every request after a compaction fails with `Invalid signature in thinking block. The block is bound to a different conversation`, because the kept thinking blocks no longer follow the messages they were created after.
+
 IDs are matched exactly after case/whitespace and known routing-suffix normalization, not as globs or prefixes. Both request gates read this setting on subsequent requests; `/fast status` includes configured IDs. Invalid entries are ignored. Only opt in verified models: fast-tier pricing is model-dependent, and opted-in models without a known fast rate are reported at standard rates. The existing response verification and retry-without-fast-mode behavior still apply. OpenAI routing is unaffected.
 
 For supported OpenAI models, the toggle owns `samplingParams.service_tier`, overriding both model and request sampling settings. Other parameters retain pi's model-then-request precedence. Explicit `onPayload` hooks still run last and can replace the payload; badge intent reflects that final payload. Remove old hard-coded fast-tier model overrides when migrating to the toggle.

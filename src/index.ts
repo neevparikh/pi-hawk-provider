@@ -280,8 +280,25 @@ interface ExtraModelConfig {
 	maxTokens?: number;
 	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	headers?: Record<string, string>;
-	compat?: { forceAdaptiveThinking?: boolean };
+	compat?: ExtraModelCompat;
 	thinkingLevelMap?: ThinkingLevelMap;
+}
+
+/**
+ * The pi-ai Anthropic `compat` flags an extra model may set. Built-in models
+ * get theirs from pi-ai's catalog; an extra model is unknown to pi-ai, so
+ * whatever its upstream needs has to be spelled out in models.json.
+ */
+interface ExtraModelCompat {
+	/** Send adaptive thinking instead of the legacy budget shape. */
+	forceAdaptiveThinking?: boolean;
+	/**
+	 * Send thinking binding controls (`prefix_mismatch_behavior: "drop_block"`).
+	 * Models that bind signed thinking to the conversation prefix reject every
+	 * request after a compaction without it, because the kept thinking blocks
+	 * no longer follow the messages they were created after.
+	 */
+	supportsMidConvoEffort?: boolean;
 }
 
 interface HawkProviderOverride {
@@ -420,11 +437,13 @@ function parseHeaders(raw: unknown): Record<string, string> | undefined {
 	return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function parseCompat(raw: unknown): { forceAdaptiveThinking?: boolean } | undefined {
+function parseCompat(raw: unknown): ExtraModelCompat | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const entry = raw as Record<string, unknown>;
-	if (typeof entry.forceAdaptiveThinking !== "boolean") return undefined;
-	return { forceAdaptiveThinking: entry.forceAdaptiveThinking };
+	const compat: ExtraModelCompat = {};
+	if (typeof entry.forceAdaptiveThinking === "boolean") compat.forceAdaptiveThinking = entry.forceAdaptiveThinking;
+	if (typeof entry.supportsMidConvoEffort === "boolean") compat.supportsMidConvoEffort = entry.supportsMidConvoEffort;
+	return Object.keys(compat).length > 0 ? compat : undefined;
 }
 
 function parseThinkingLevelMap(raw: unknown): ThinkingLevelMap | undefined {
