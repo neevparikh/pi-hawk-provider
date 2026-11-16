@@ -37,6 +37,7 @@ import {
 } from "./openai-fast-mode.js";
 import { MIDDLEMAN_MODEL_SUFFIXES, parseFastModeModelIds, stripMiddlemanSuffix } from "./model-ids.js";
 import { loadState, saveState, statePath } from "./state.js";
+import { credentialsFromTokenCommand, getTokenCommand, runTokenCommand } from "./token-command.js";
 
 const DEFAULT_ISSUER = "https://metr.okta.com/oauth2/aus1ww3m0x41jKp3L1d8/";
 const DEFAULT_CLIENT_ID = "0oa1wxy3qxaHOoGxG1d8";
@@ -1023,6 +1024,13 @@ async function pollDeviceToken(
 
 async function loginHawk(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
 	const config = getConfig();
+	const tokenCommand = getTokenCommand();
+	if (tokenCommand) {
+		callbacks.onProgress?.("Getting a token from HAWK_TOKEN_COMMAND...");
+		const credentials = await credentialsFromTokenCommand(tokenCommand);
+		await tryDiscoverModels(credentials.access, config, callbacks.onProgress);
+		return credentials;
+	}
 	const deviceCode = await startDeviceCodeFlow(config);
 
 	callbacks.onAuth({
@@ -1080,6 +1088,18 @@ async function refreshAccessToken(config: HawkConfig, refreshToken: string): Pro
 
 async function refreshHawkToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
 	const config = getConfig();
+	const tokenCommand = getTokenCommand();
+	if (tokenCommand) {
+		// The command owns the login; a refresh token left over from an earlier
+		// OAuth login is deliberately not used, and is dropped from the result.
+		const fromCommand = await credentialsFromTokenCommand(tokenCommand);
+		try {
+			await tryDiscoverModels(fromCommand.access, config);
+		} catch {
+			// Keep existing models if discovery fails.
+		}
+		return fromCommand;
+	}
 	const token = await refreshAccessToken(config, credentials.refresh);
 
 	try {
@@ -1096,6 +1116,11 @@ async function refreshHawkToken(credentials: OAuthCredentials): Promise<OAuthCre
 }
 
 async function getStartupAccessToken(config: HawkConfig): Promise<string | undefined> {
+	const tokenCommand = getTokenCommand();
+	if (tokenCommand) {
+		return runTokenCommand(tokenCommand);
+	}
+
 	const envAccessToken = process.env.HAWK_ACCESS_TOKEN?.trim();
 	if (envAccessToken) {
 		return envAccessToken;
@@ -1421,6 +1446,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		initialAccessToken = await getStartupAccessToken(config);
 	} catch (error) {
 		debugLog("Failed to get startup Hawk token", error);
+		if (getTokenCommand()) {
+			// Without a token there are no models, and pi reports only an unknown
+			// provider; say why.
+			console.error(`[pi-hawk-provider] ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	if (initialAccessToken) {
