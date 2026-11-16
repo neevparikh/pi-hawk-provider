@@ -37,6 +37,7 @@ import {
 } from "./openai-fast-mode.js";
 import { MIDDLEMAN_MODEL_SUFFIXES, parseFastModeModelIds, stripMiddlemanSuffix } from "./model-ids.js";
 import { loadState, saveState, statePath } from "./state.js";
+import { namesFromModelInfo, shouldTryModelInfo } from "./permitted-models-info.js";
 import { credentialsFromTokenCommand, getTokenCommand, runTokenCommand } from "./token-command.js";
 
 const DEFAULT_ISSUER = "https://metr.okta.com/oauth2/aus1ww3m0x41jKp3L1d8/";
@@ -875,6 +876,28 @@ function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[]
 	return models;
 }
 
+/** The models a delegated token may call; undefined if this endpoint refuses it too. */
+async function fetchPermittedModelInfoNames(accessToken: string, config: HawkConfig): Promise<string[] | undefined> {
+	const url = `${config.middlemanBaseUrl}/permitted_models_info`;
+	debugLog("Falling back to permitted model info", { url });
+	const response = await fetch(url, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Accept: "application/json",
+			...(config.headers ?? {}),
+		},
+		body: JSON.stringify({ api_key: accessToken }),
+	});
+	if (!response.ok) {
+		debugLog("Permitted model info failed", { status: response.status });
+		return undefined;
+	}
+	const names = namesFromModelInfo(parseJson<unknown>(await response.text()));
+	debugLog("Received permitted model info names", { count: names.length, sample: names.slice(0, 20) });
+	return names;
+}
+
 async function fetchPermittedModelNames(accessToken: string, config: HawkConfig): Promise<string[]> {
 	const url = `${config.middlemanBaseUrl}/permitted_models`;
 	debugLog("Fetching permitted Hawk models", { url });
@@ -893,6 +916,12 @@ async function fetchPermittedModelNames(accessToken: string, config: HawkConfig)
 
 	const text = await response.text();
 	if (!response.ok) {
+		if (shouldTryModelInfo(response.status)) {
+			const infoNames = await fetchPermittedModelInfoNames(accessToken, config);
+			if (infoNames) {
+				return infoNames;
+			}
+		}
 		throw new Error(`Model discovery failed: ${response.status} ${text}`);
 	}
 

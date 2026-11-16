@@ -134,6 +134,8 @@ When a valid Hawk access token is available, the extension discovers models by P
 
 and builds the provider list from permitted OpenAI/Anthropic-compatible models.
 
+If that endpoint refuses the token (401 or 403), as it does for a delegated token from a restricted `hawk` login, the extension reads `${HAWK_MIDDLEMAN_BASE_URL}/permitted_models_info` instead and uses the live models it lists.
+
 Only models that name-match pi's built-in `openai`/`anthropic` model IDs are registered. The extension reuses built-in defaults (API type, reasoning capability, input types, context window, max tokens, and cost fields).
 
 Discovery runs:
