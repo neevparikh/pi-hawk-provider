@@ -54,6 +54,36 @@ pi -e ~/repos/pi-hawk-provider/src/index.ts
 
 If both OAuth and env token are available, pi credential priority rules apply.
 
+## Tokens from a command
+
+Set `HAWK_TOKEN_COMMAND` to a shell command that prints a valid access token, and
+the extension takes its tokens from that command instead of logging in itself:
+
+```bash
+export HAWK_TOKEN_COMMAND="hawk auth access-token"
+```
+
+Use this when the `hawk` CLI holds the login you want pi to use, such as a
+restricted profile or a devbox login. While it is set:
+
+- `/login hawk` runs the command instead of starting a device-code flow.
+- Token refresh re-runs the command. A refresh token from an earlier OAuth login
+  is never used, and is replaced in `~/.pi/agent/auth.json` at the next refresh.
+- Model discovery at startup uses the command's token, so the model list is what
+  that login can call.
+
+The token is refreshed a minute before the `exp` claim in it, or after five
+minutes if it isn't a JWT.
+
+For a headless setup with nobody to run `/login`, seed `~/.pi/agent/auth.json`
+with an already-expired entry; pi then calls the command on first use:
+
+```json
+{ "hawk": { "type": "oauth", "access": "-", "refresh": "token-command", "expires": 0 } }
+```
+
+Don't set `HAWK_ACCESS_TOKEN` as well: pi may prefer it over the command.
+
 ## Configuration
 
 All settings are optional.
@@ -103,6 +133,8 @@ When a valid Hawk access token is available, the extension discovers models by P
 - `${HAWK_MIDDLEMAN_BASE_URL}/permitted_models`
 
 and builds the provider list from permitted OpenAI/Anthropic-compatible models.
+
+If that endpoint refuses the token (401 or 403), as it does for a delegated token from a restricted `hawk` login, the extension reads `${HAWK_MIDDLEMAN_BASE_URL}/permitted_models_info` instead and uses the live models it lists.
 
 Only models that name-match pi's built-in `openai`/`anthropic` model IDs are registered. The extension reuses built-in defaults (API type, reasoning capability, input types, context window, max tokens, and cost fields).
 
