@@ -38,7 +38,13 @@ import {
 import { MIDDLEMAN_MODEL_SUFFIXES, parseFastModeModelIds, stripMiddlemanSuffix } from "./model-ids.js";
 import { loadState, saveState, statePath } from "./state.js";
 import { namesFromModelInfo, shouldTryModelInfo } from "./permitted-models-info.js";
-import { credentialsFromTokenCommand, getTokenCommand, runTokenCommand } from "./token-command.js";
+import {
+	credentialsFromTokenCommand,
+	getTokenCommand,
+	runTokenCommand,
+	TOKEN_COMMAND_REFRESH_SENTINEL,
+} from "./token-command.js";
+import { withoutRefusalFallbacks } from "./builtin-compat.js";
 
 const DEFAULT_ISSUER = "https://metr.okta.com/oauth2/aus1ww3m0x41jKp3L1d8/";
 const DEFAULT_CLIENT_ID = "0oa1wxy3qxaHOoGxG1d8";
@@ -862,7 +868,7 @@ function buildDiscoveredModels(permittedModelNames: string[]): HawkModelConfig[]
 			// (no longer auto-detected from id). Carry it through so streamHawk can
 			// pass it to streamSimpleAnthropic; without it, Opus 4.7 rejects the
 			// request with `thinking.type.enabled is not supported for this model`.
-			...(builtIn.compat ? { compat: builtIn.compat } : {}),
+			...(builtIn.compat ? { compat: withoutRefusalFallbacks(builtIn.compat) } : {}),
 		} satisfies Omit<HawkModelConfig, "id" | "name">;
 
 		// When the upstream id carries a middleman routing suffix (e.g.
@@ -1106,6 +1112,12 @@ async function loginHawk(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentia
 async function refreshAccessToken(config: HawkConfig, refreshToken: string): Promise<OAuthTokenSuccess> {
 	if (!refreshToken) {
 		throw new Error("Missing refresh token");
+	}
+	if (refreshToken === TOKEN_COMMAND_REFRESH_SENTINEL) {
+		throw new Error(
+			"Hawk credentials came from a token command, but none is available: set HAWK_TOKEN_COMMAND " +
+				"(e.g. `hawk auth access-token`) or put the hawk CLI on PATH, then run /login hawk.",
+		);
 	}
 
 	const response = await fetch(issuerUrl(config.issuer, config.tokenPath), {

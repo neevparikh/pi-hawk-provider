@@ -1,9 +1,14 @@
 import { execFile } from "node:child_process";
+import { accessSync, constants, statSync } from "node:fs";
+import { delimiter, join } from "node:path";
 
 /**
  * Take access tokens from a command instead of this extension's own OAuth
  * login. Set `HAWK_TOKEN_COMMAND` to a shell command that prints a valid
- * access token on stdout, e.g. `hawk auth access-token`.
+ * access token on stdout, e.g. `hawk auth access-token`. When neither it nor
+ * `HAWK_ACCESS_TOKEN` is set and the `hawk` CLI is on PATH,
+ * `hawk auth access-token` is used; set it to an empty string to use the
+ * extension's own OAuth login instead.
  *
  * The command owns the login: the extension never starts a device-code flow
  * or uses a refresh token while it is set, so it holds nothing longer-lived
@@ -25,8 +30,29 @@ export type TokenCommandCredentials = {
 	expires: number;
 };
 
+export const DEFAULT_TOKEN_COMMAND = "hawk auth access-token";
+
+export function isOnPath(name: string, pathVar: string | undefined): boolean {
+	return (pathVar ?? "")
+		.split(delimiter)
+		.filter((dir) => dir.length > 0)
+		.some((dir) => {
+			const candidate = join(dir, name);
+			try {
+				accessSync(candidate, constants.X_OK);
+				return statSync(candidate).isFile();
+			} catch {
+				return false;
+			}
+		});
+}
+
 export function getTokenCommand(env: NodeJS.ProcessEnv = process.env): string | undefined {
-	const command = env.HAWK_TOKEN_COMMAND?.trim();
+	if (env.HAWK_TOKEN_COMMAND === undefined) {
+		const useDefault = !env.HAWK_ACCESS_TOKEN?.trim() && isOnPath("hawk", env.PATH);
+		return useDefault ? DEFAULT_TOKEN_COMMAND : undefined;
+	}
+	const command = env.HAWK_TOKEN_COMMAND.trim();
 	return command ? command : undefined;
 }
 

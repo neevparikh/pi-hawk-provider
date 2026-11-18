@@ -64,7 +64,13 @@ export HAWK_TOKEN_COMMAND="hawk auth access-token"
 ```
 
 Use this when the `hawk` CLI holds the login you want pi to use, such as a
-restricted profile or a devbox login. While it is set:
+restricted profile or a devbox login.
+
+If neither `HAWK_TOKEN_COMMAND` nor `HAWK_ACCESS_TOKEN` is set and `hawk` is on
+`PATH`, the extension uses `hawk auth access-token` by default. Set
+`HAWK_TOKEN_COMMAND=""` to use the extension's own OAuth login instead.
+
+While a token command is in use:
 
 - `/login hawk` runs the command instead of starting a device-code flow.
 - Token refresh re-runs the command. A refresh token from an earlier OAuth login
@@ -83,6 +89,11 @@ with an already-expired entry; pi then calls the command on first use:
 ```
 
 Don't set `HAWK_ACCESS_TOKEN` as well: pi may prefer it over the command.
+
+If credentials stored from a token command need refreshing and no command is
+available (`HAWK_TOKEN_COMMAND` unset and `hawk` not on `PATH`), refresh fails
+with a message saying so, rather than sending the stored placeholder to the
+OAuth server.
 
 ## Configuration
 

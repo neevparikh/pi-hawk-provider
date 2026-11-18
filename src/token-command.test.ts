@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
 	credentialsFromToken,
 	credentialsFromTokenCommand,
+	DEFAULT_TOKEN_COMMAND,
 	getTokenCommand,
+	isOnPath,
 	jwtExpiryMs,
 	runTokenCommand,
 	TOKEN_COMMAND_REFRESH_SENTINEL,
@@ -14,10 +19,34 @@ function jwt(payload: object): string {
 	return `${part({ alg: "none" })}.${part(payload)}.sig`;
 }
 
-test("getTokenCommand reads HAWK_TOKEN_COMMAND and ignores blanks", () => {
-	assert.equal(getTokenCommand({ HAWK_TOKEN_COMMAND: " hawk auth access-token " }), "hawk auth access-token");
-	assert.equal(getTokenCommand({ HAWK_TOKEN_COMMAND: "  " }), undefined);
+function dirWithHawk(): string {
+	const dir = mkdtempSync(join(tmpdir(), "hawk-bin-"));
+	writeFileSync(join(dir, "hawk"), "#!/bin/sh\n", { mode: 0o755 });
+	return dir;
+}
+
+test("getTokenCommand reads HAWK_TOKEN_COMMAND", () => {
+	assert.equal(getTokenCommand({ HAWK_TOKEN_COMMAND: " my-token-cmd ", PATH: dirWithHawk() }), "my-token-cmd");
+});
+
+test("getTokenCommand defaults to the hawk CLI when HAWK_TOKEN_COMMAND is unset", () => {
+	assert.equal(getTokenCommand({ PATH: `/nonexistent:${dirWithHawk()}` }), DEFAULT_TOKEN_COMMAND);
+	assert.equal(getTokenCommand({ PATH: mkdtempSync(join(tmpdir(), "empty-bin-")) }), undefined);
 	assert.equal(getTokenCommand({}), undefined);
+});
+
+test("getTokenCommand leaves an explicit HAWK_ACCESS_TOKEN in charge", () => {
+	assert.equal(getTokenCommand({ HAWK_ACCESS_TOKEN: "tok", PATH: dirWithHawk() }), undefined);
+});
+
+test("getTokenCommand treats a blank HAWK_TOKEN_COMMAND as opting out", () => {
+	assert.equal(getTokenCommand({ HAWK_TOKEN_COMMAND: "  ", PATH: dirWithHawk() }), undefined);
+});
+
+test("isOnPath ignores non-executable files", () => {
+	const dir = mkdtempSync(join(tmpdir(), "noexec-bin-"));
+	writeFileSync(join(dir, "hawk"), "", { mode: 0o644 });
+	assert.equal(isOnPath("hawk", dir), false);
 });
 
 test("runTokenCommand returns the last non-empty line of stdout", async () => {
